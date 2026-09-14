@@ -42,7 +42,7 @@ class ConfidenceAnalyzer:
         self.pth_test = Path(setting['pth_test']).absolute()
 
         # Training data source configuration
-        self.training_data_source = setting.get('train_data_source', 'mixed')
+        self.training_data_source = setting['cv_train_data_source']
         self.pth_ds_gen_input_synthetic = Path(setting['pth_ds_gen_input_synthetic']).absolute() if setting.get('pth_ds_gen_input_synthetic') else None
         self.pth_ds_gen_input_real = Path(setting['pth_ds_gen_input_real']).absolute() if setting.get('pth_ds_gen_input_real') else None
 

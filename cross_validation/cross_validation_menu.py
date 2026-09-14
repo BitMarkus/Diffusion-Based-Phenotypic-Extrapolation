@@ -51,7 +51,7 @@ class CrossValidationMenu:
         # Quick verification
         synthetic_dir = setting["pth_ds_gen_input_synthetic"]
         real_dir = setting["pth_ds_gen_input_real"]
-        print(f"Training data source: {setting['train_data_source']}")
+        print(f"Training data source: {setting['cv_train_data_source']}")
         print(f"Synthetic folder: {synthetic_dir}")
         print(f"Real folder: {real_dir}")
         if not synthetic_dir.exists():

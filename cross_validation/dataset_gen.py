@@ -30,7 +30,7 @@ class DatasetGenerator():
         self.input_dir = setting['pth_ds_gen_input_mixed']
         self.input_dir_synthetic = setting.get('pth_ds_gen_input_synthetic', None)
         self.input_dir_real = setting.get('pth_ds_gen_input_real', None)
-        self.training_data_source = setting.get('train_data_source', 'mixed')
+        self.training_data_source = setting['cv_train_data_source']
         self.output_dir = setting['pth_ds_gen_output']
         self.wt_lines = setting['wt_lines']
         self.ko_lines = setting['ko_lines']

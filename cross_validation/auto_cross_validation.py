@@ -5,6 +5,7 @@
 # ===== Standard Library Imports =====
 from pathlib import Path
 import json
+import shutil
 # ===== Third-Party Imports =====
 import torch
 # ===== Own Modules =====
@@ -154,6 +155,16 @@ class AutoCrossValidation:
         self.cnn_wrapper.model = self.cnn_wrapper.load_model(self.device)
         self.cnn_wrapper.model = self.cnn_wrapper.model.to(self.device)
 
+    # Copy the current settings.py to the cross-validation output folder
+    # for reproducibility. This mirrors what Train does for single training runs.
+    def _copy_settings_file(self) -> None:
+        import settings as settings_module
+        settings_src = Path(settings_module.__file__)
+        settings_dst = self.acv_results_dir / "settings_copy.py"
+        if settings_src.exists():
+            shutil.copy2(settings_src, settings_dst)
+            print(f"✓ Settings file copied to: {settings_dst}")
+
     #############################################################################################################
     # CALL
 
@@ -166,6 +177,9 @@ class AutoCrossValidation:
         print("Cleanup finished.")
 
         self.acv_results_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy settings file for reproducibility
+        self._copy_settings_file()
 
         configs = self.ds_gen.get_dataset_configs()
         total_available = len(configs)

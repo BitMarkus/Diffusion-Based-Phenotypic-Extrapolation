@@ -136,14 +136,12 @@ setting = {
 
     # Determines the source folder for training data
     # Options: "mixed", "synthetic_only", "real_only"
-    "train_data_source": "real_only",
-
+    "cv_train_data_source": "real_only",
     # Which cross-validation folds to train (1-based indices)
     #   None or []     -> train all folds
     #   [1, 4, 10]     -> train only folds 1, 4, and 10
     # Useful for resuming a partial run or re-running specific folds.
     "cv_folds_to_train": [],
-
     # If True, folds that already have a completed checkpoint folder
     # (i.e., at least one .pt file in output/cross_validation/dataset_X/checkpoints/)
     # will be skipped automatically. This prevents accidental overwriting

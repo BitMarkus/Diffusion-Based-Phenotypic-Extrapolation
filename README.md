@@ -593,7 +593,7 @@ The dataset generator supports three training data source modes, controlled by `
 
 | Setting | Type | Description | Example Value |
 |---------|------|-------------|---------------|
-| `train_data_source` | str | `"mixed"`, `"synthetic_only"`, or `"real_only"` | `"real_only"` |
+| `cv_train_data_source` | str | `"mixed"`, `"synthetic_only"`, or `"real_only"` | `"real_only"` |
 | `wt_lines` | list | Wild-type cell line folder names | `["line_1", "line_2", "line_3", "line_4", "line_5"]` |
 | `ko_lines` | list | Knockout cell line folder names | `["line_6", "line_7", "line_8", "line_9"]` |
 | `classes` | list | Class names matching folder structure | `["KO", "WT"]` |
