@@ -1,25 +1,11 @@
-# Diffusion-Based Phenotypic Extrapolation
-# Copyright (C) 2026 Markus Reichold <markus.reichold@ur.de>
-# SPDX-License-Identifier: MIT
-
 # ===== Own Modules =====
 import functions as fn
-from single_training import CNN_Model, Dataset
 from single_training.single_training_menu import SingleTrainingMenu
 from cross_validation.cross_validation_menu import CrossValidationMenu
-# from analysis.analysis_menu import AnalysisMenu
+from analysis.analysis_menu import AnalysisMenu
 from utilities.utilities_menu import Utilities
 from preprocessing.preprocessing_menu import PreprocessingMenu
 from export_plotting.export_plotting_menu import ExportPlottingMenu
-
-###########
-# OBJECTS #
-###########
-
-# Create a dataset object
-ds = Dataset()
-# Create wrapper (contains all metadata)
-cnn_wrapper = CNN_Model()
 
 ########
 # MAIN #
@@ -56,7 +42,7 @@ def main() -> None:
 
         if menu1 == 1:
             st_menu = SingleTrainingMenu()
-            st_menu.menu(device, cnn_wrapper, ds)
+            st_menu.menu(device)
 
         #########################
         # Cross Validation      #
@@ -71,9 +57,8 @@ def main() -> None:
         #########################
 
         elif menu1 == 3:
-            # analysis_menu = AnalysisMenu()
-            # analysis_menu.menu(device)
-            pass
+            analysis_menu = AnalysisMenu()
+            analysis_menu.menu(device)
 
         #########################
         # Utilities             #
