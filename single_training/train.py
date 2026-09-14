@@ -20,6 +20,8 @@ from torch.optim import Adam, SGD, AdamW
 from torch.amp import GradScaler, autocast
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.metrics import (

@@ -11,6 +11,8 @@ warnings.filterwarnings('ignore')
 # ===== Third-Party Imports =====
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from tensorboard.backend.event_processing import event_accumulator

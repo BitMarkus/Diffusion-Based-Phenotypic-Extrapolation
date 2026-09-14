@@ -685,6 +685,69 @@ All training settings from Single Training apply. The following are the cross-va
 | `chckpt_selection_method` | str | `"balanced_accuracy"`, `"composite_score"`, or `"both"` | `"balanced_accuracy"` |
 | `chckpt_min_balanced_acc_threshold` | float | Minimum balanced accuracy to save | `0.65` |
 | `chckpt_min_per_class_acc_balanced` | float | Minimum per-class accuracy | `0.60` |
+| `cv_folds_to_train` | list / None | Which folds to train (1-based). `None` or `[]` means all folds. | `None` |
+| `cv_skip_existing_folds` | bool | Skip folds that already have checkpoints | `True` |
+
+#### Fold Selection (`cv_folds_to_train`)
+
+By default, all `N_WT × N_KO` folds are trained in a single run. The `cv_folds_to_train` setting allows restricting the run to a subset of folds.
+
+| Value | Behavior |
+|-------|----------|
+| `None` | Train all folds (default) |
+| `[]` (empty list) | Same as `None` — train all folds |
+| `[1, 4, 10]` | Train only folds 1, 4, and 10 |
+| `[13, 14, 15, 16, 17, 18, 19, 20]` | Train only the last eight folds (useful for resuming a partial run) |
+
+The fold indices are **1-based** and correspond to the order of `wt_lines × ko_lines`. For example, with 5 WT lines and 4 KO lines, folds 1–20 exist.
+
+Example console output with `cv_folds_to_train = [13, 14, 15]`:
+
+```plaintext
+Fold filtering enabled
+  Requested folds: [13, 14, 15]
+  Available folds: 1–20
+  Matched folds:   [13, 14, 15]
+
+>> PROCESSING DATASET 13 OF 3:
+...
+```
+
+If a requested fold does not exist (e.g., `21` in a 20-fold setup), a warning is printed and the run continues with the folds that do exist:
+
+```plaintext
+  WARNING: The following requested folds do not exist: [21]
+```
+
+#### Skipping Existing Folds (`cv_skip_existing_folds`)
+
+When enabled (`True`, the default), the cross-validation script automatically skips folds that already have a completed checkpoint folder. A fold is considered "already done" if:
+
+1. `output/cross_validation/dataset_X/` exists
+2. It contains a `checkpoints/` subfolder
+3. That subfolder contains at least one `.pt` file
+
+This makes resuming a partial run safe: previously completed folds are preserved, and only missing folds are trained.
+
+Example console output on a resume:
+
+```plaintext
+Skipping folds that already have checkpoints: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+>> PROCESSING DATASET 13 OF 8:
+...
+```
+
+**To force a full re-run**, set `cv_skip_existing_folds = False`. This causes all requested folds to be processed, overwriting any existing results.
+
+**Edge cases:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Requested fold does not exist | Warning printed, fold is ignored |
+| All requested folds already exist | "No folds to process. Exiting." and the script returns cleanly |
+| Fold folder exists but has no checkpoints | Fold is processed (treated as incomplete) |
+| Both a nonexistent fold and an existing fold are requested | Both messages printed; run continues with the remaining folds |
 
 #### Test Set Split Behavior
 
@@ -3377,5 +3440,17 @@ As a result, the model performs well on validation images from cell lines it has
 **Leave-one-cell-line-out cross-validation avoids this problem** by holding out entire cell lines from training. Under this scheme, the model can only succeed by learning features that generalize across individuals, which is exactly the ability that a diagnostic tool would need.
 
 This is why the workflow in this chapter emphasizes cross-validation (Chapter 2.2) rather than a random split, and why the final evaluation in Flowchart 2 is performed on **real images from held-out cell lines** — the most stringent test of whether the model has learned disease-associated features rather than cell-line-specific artifacts.
+
+#### Resuming an Interrupted Cross-Validation
+
+Long cross-validation runs (20 folds over many hours) can be interrupted by crashes, power losses, or intentional stops. The `cv_folds_to_train` and `cv_skip_existing_folds` settings make it safe to resume without restarting from fold 1:
+
+```python
+# In settings.py
+"cv_folds_to_train": None,           # or a specific list, e.g. [13, 14, ..., 20]
+"cv_skip_existing_folds": True,
+```
+
+With these settings, previously completed folds are skipped and only missing folds are trained. See Section 2.2 for details.
 
 ---

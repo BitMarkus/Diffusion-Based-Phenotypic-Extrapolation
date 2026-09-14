@@ -40,6 +40,11 @@ class AutoCrossValidation:
         self.val_from_train_split = setting["ds_val_from_train_split"]
         self.val_from_test_split = setting["ds_val_from_test_split"]
 
+        # Folds to train (None or [] means all)
+        self.folds_to_train = setting["cv_folds_to_train"]
+        # Whether to skip training for folds that already have results in the output folder
+        self.skip_existing_folds = setting["cv_skip_existing_folds"]
+
         # Output directory for cross-validation results
         self.acv_results_dir = setting['pth_output'] / "cross_validation"
 
@@ -163,6 +168,50 @@ class AutoCrossValidation:
         self.acv_results_dir.mkdir(parents=True, exist_ok=True)
 
         configs = self.ds_gen.get_dataset_configs()
+        total_available = len(configs)
+
+        # Filter to the requested folds, if any were specified
+        if self.folds_to_train:
+            requested = set(self.folds_to_train)
+            configs = [c for c in configs if c["dataset_idx"] in requested]
+
+            print(f"\nFold filtering enabled")
+            print(f"  Requested folds: {sorted(requested)}")
+            print(f"  Available folds: 1–{total_available}")
+            print(f"  Matched folds:   {[c['dataset_idx'] for c in configs]}")
+
+            all_indices = {i for i in range(1, total_available + 1)}
+            missing = requested - all_indices
+            if missing:
+                print(f"  WARNING: The following requested folds do not exist: {sorted(missing)}")
+
+        # Safeguard: skip folds that already have checkpoints
+        if self.skip_existing_folds:
+            filtered = []
+            skipped = []
+
+            for c in configs:
+                fold_path = self.acv_results_dir / f"dataset_{c['dataset_idx']}"
+                checkpoint_path = fold_path / "checkpoints"
+
+                already_done = (
+                    checkpoint_path.exists()
+                    and any(checkpoint_path.glob("*.pt"))
+                )
+
+                if already_done:
+                    skipped.append(c["dataset_idx"])
+                else:
+                    filtered.append(c)
+
+            configs = filtered
+
+            if skipped:
+                print(f"\nSkipping folds that already have checkpoints: {sorted(skipped)}")
+
+        if not configs:
+            print("\nNo folds to process. Exiting.")
+            return
 
         for config in configs:
             self.ds = Dataset()

@@ -9,6 +9,8 @@ warnings.filterwarnings('ignore')
 # ===== Third-Party Imports =====
 import json
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 # ===== Own Modules =====
 from settings import setting

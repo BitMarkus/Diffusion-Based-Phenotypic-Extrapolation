@@ -18,7 +18,7 @@ setting = {
     ############
 
     # Number of epochs
-    "train_num_epochs": 10, # 40
+    "train_num_epochs": 40, # 40
     # Batch size for training and validation datasets
     "ds_batch_size": 50,
 
@@ -138,6 +138,18 @@ setting = {
     # Options: "mixed", "synthetic_only", "real_only"
     "train_data_source": "real_only",
 
+    # Which cross-validation folds to train (1-based indices)
+    #   None or []     -> train all folds
+    #   [1, 4, 10]     -> train only folds 1, 4, and 10
+    # Useful for resuming a partial run or re-running specific folds.
+    "cv_folds_to_train": [],
+
+    # If True, folds that already have a completed checkpoint folder
+    # (i.e., at least one .pt file in output/cross_validation/dataset_X/checkpoints/)
+    # will be skipped automatically. This prevents accidental overwriting
+    # when resuming a partial run.
+    "cv_skip_existing_folds": True,
+
     #################
     # AUGMENTATIONS #
     #################
@@ -212,7 +224,7 @@ setting = {
     # EfficientNet: efficientnet_b0, efficientnet_b3, efficientnet_b4, efficientnet_b7
     # ConvNeXt: convnext_tiny, convnext_small
     # Custom CNN architecture: custom
-    "cnn_type": "densenet121", 
+    "cnn_type": "resnet50",  # densenet121
     # Pretrained or initialized weights
     "cnn_is_pretrained": True,
     # Initialization type for non-pretrained cnns

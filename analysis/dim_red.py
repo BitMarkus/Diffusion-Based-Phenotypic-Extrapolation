@@ -12,6 +12,8 @@ from pathlib import Path
 import torch
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
