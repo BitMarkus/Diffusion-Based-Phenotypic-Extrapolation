@@ -56,8 +56,7 @@ def main() -> None:
         #########################
 
         elif menu1 == 3:
-            # Lazy import: heavy dependencies (UMAP, numba, etc.) are only loaded
-            # when the user actually opens the Analysis menu.
+            # Lazy import: heavy dependencies (UMAP, numba, etc.) are only loaded when the user actually opens the Analysis menu.
             # Especially the dimension reduction modules (UMAP, t-SNE) can take a long time to import, so this avoids unnecessary delays.
             from analysis.analysis_menu import AnalysisMenu
             analysis_menu = AnalysisMenu()

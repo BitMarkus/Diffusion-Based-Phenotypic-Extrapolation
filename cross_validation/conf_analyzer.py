@@ -18,8 +18,8 @@ from tqdm import tqdm
 from sklearn.metrics import balanced_accuracy_score
 from torch.amp import autocast
 # ===== Own Modules =====
-from single_training import Dataset  # Changed: import from single_training package
-from single_training import CNN_Model  # Changed: import from single_training package
+from single_training import Dataset
+from single_training import CNN_Model
 from settings import setting
 
 class ConfidenceAnalyzer:
@@ -38,11 +38,11 @@ class ConfidenceAnalyzer:
 
         # Paths
         self.pth_output = Path(setting['pth_output']).absolute()
-        self.pth_ds_gen_input = Path(setting['pth_ds_gen_input_real']).absolute()
         self.pth_test = Path(setting['pth_test']).absolute()
 
         # Training data source configuration
         self.training_data_source = setting['cv_train_data_source']
+        self.pth_ds_gen_input_mixed = Path(setting['pth_ds_gen_input_mixed']).absolute()
         self.pth_ds_gen_input_synthetic = Path(setting['pth_ds_gen_input_synthetic']).absolute() if setting.get('pth_ds_gen_input_synthetic') else None
         self.pth_ds_gen_input_real = Path(setting['pth_ds_gen_input_real']).absolute() if setting.get('pth_ds_gen_input_real') else None
 
@@ -63,6 +63,9 @@ class ConfidenceAnalyzer:
         # Composite score settings
         self.penalty_weight = setting['chckpt_penalty_weight']
         self.min_class_acc_threshold = setting['chckpt_min_class_acc_threshold']
+
+        # Renaming options
+        self.rename_with_confidence = setting["ca_rename_with_confidence"]
 
         # Which confusion matrices to use for checkpoint selection
         cm_setting = setting.get('ca_use_test_cm', 'validation')
@@ -106,11 +109,11 @@ class ConfidenceAnalyzer:
         else:
             print(f"  Checkpoint selection method: {self.ckpt_select_method}")
         print(f"  Output directory: {self.pth_conf_analizer_results}")
-        print(f"  Mixed folder: {self.pth_ds_gen_input}")
         if self.pth_ds_gen_input_synthetic:
             print(f"  Synthetic folder: {self.pth_ds_gen_input_synthetic}")
         if self.pth_ds_gen_input_real:
             print(f"  Real folder: {self.pth_ds_gen_input_real}")
+        print(f"  Mixed folder: {self.pth_ds_gen_input_mixed}")
 
         # Validate folder existence
         if self.training_data_source in ['synthetic_only', 'real_only']:
@@ -118,8 +121,8 @@ class ConfidenceAnalyzer:
                 print(f"  ⚠️  WARNING: Real folder not found or not configured")
                 print(f"     Make sure 'pth_ds_gen_input_real' is set correctly in settings.py")
 
-        if not self.pth_ds_gen_input.exists():
-            print(f"  ⚠️  WARNING: Mixed folder not found: {self.pth_ds_gen_input}")
+        if not self.pth_ds_gen_input_mixed.exists():
+            print(f"  ⚠️  WARNING: Mixed folder not found: {self.pth_ds_gen_input_mixed}")
 
     #############################################################################################################
     # METHODS
@@ -162,16 +165,15 @@ class ConfidenceAnalyzer:
                 datasets[idx] = {'test_wt': wt, 'test_ko': ko, 'dataset_idx': idx}
         return datasets
 
-    # Generate test set using appropriate source directory based on configuration.
+    # Generate test set using the real folder as source.
+    # Validation and test images always come from the real folder,
+    # regardless of the training data source mode.
     def _generate_test_set(self, test_wt: str, test_ko: str, current_dataset: int = None, total_datasets: int = None) -> None:
         shutil.rmtree(self.pth_test, ignore_errors=True)
         for cls in self.classes:
             (self.pth_test / cls).mkdir(parents=True)
 
-        if self.training_data_source in ['synthetic_only', 'real_only'] and self.pth_ds_gen_input_real:
-            source_dir = self.pth_ds_gen_input_real
-        else:
-            source_dir = self.pth_ds_gen_input
+        source_dir = self.pth_ds_gen_input_real
 
         if current_dataset is not None and total_datasets is not None:
             tqdm.write(f"\n>> PROCESSING DATASET {current_dataset} OF {total_datasets}:")
@@ -229,8 +231,9 @@ class ConfidenceAnalyzer:
                     cm_data = json.load(f)
 
                 if 'class_accuracy' in cm_data:
-                    wt_acc = cm_data['class_accuracy'].get(self.classes[0], 0)
-                    ko_acc = cm_data['class_accuracy'].get(self.classes[1], 0)
+                    class_accuracy = cm_data['class_accuracy']
+                    wt_acc = class_accuracy.get('WT', 0)
+                    ko_acc = class_accuracy.get('KO', 0)
                     overall_acc = cm_data.get('overall_accuracy', 0)
                 else:
                     wt_acc = ko_acc = overall_acc = 0
@@ -250,8 +253,8 @@ class ConfidenceAnalyzer:
                         score = (wt_acc + ko_acc) / 2
                 elif method == 'composite_score':
                     class_accuracies = {
-                        self.classes[0]: wt_acc,
-                        self.classes[1]: ko_acc
+                        'WT': wt_acc,
+                        'KO': ko_acc
                     }
                     score, class_std, min_class_acc = self._calculate_composite_score(
                         class_accuracies, overall_acc, penalty_weight=self.penalty_weight
@@ -338,12 +341,13 @@ class ConfidenceAnalyzer:
                         try:
                             with open(candidates[0], 'r') as f:
                                 cm_data = json.load(f)
-                            wt_acc = cm_data['class_accuracy'].get(self.classes[0], 0)
-                            ko_acc = cm_data['class_accuracy'].get(self.classes[1], 0)
+                            class_accuracy = cm_data['class_accuracy']
+                            wt_acc = class_accuracy.get('WT', 0)
+                            ko_acc = class_accuracy.get('KO', 0)
                             overall_acc = cm_data.get('overall_accuracy', 0)
 
                             if self.ckpt_select_method == 'composite_score':
-                                class_accuracies = {self.classes[0]: wt_acc, self.classes[1]: ko_acc}
+                                class_accuracies = {'WT': wt_acc, 'KO': ko_acc}
                                 comp_score, comp_std, min_acc = self._calculate_composite_score(
                                     class_accuracies, overall_acc, penalty_weight=self.penalty_weight
                                 )
@@ -436,10 +440,9 @@ class ConfidenceAnalyzer:
         }
 
     # Get the source directory for searching original images.
+    # Validation and test images always come from the real folder.
     def _get_source_directory_for_search(self) -> Path:
-        if self.training_data_source in ['synthetic_only', 'real_only'] and self.pth_ds_gen_input_real:
-            return self.pth_ds_gen_input_real
-        return self.pth_ds_gen_input
+        return self.pth_ds_gen_input_real
 
     # Build image history from all results.
     def _build_image_history(self, results: dict) -> None:
@@ -508,15 +511,11 @@ class ConfidenceAnalyzer:
             tqdm.write(f"Error loading split info for dataset {dataset_num}: {str(e)}")
             return None, (0, 0)
 
-    # Find the original image path from source directories.
+    # Find the original image path in the real folder.
     def _find_original_image_path(self, img_key: str) -> str:
-        source_dir = self._get_source_directory_for_search()
+        source_dir = self.pth_ds_gen_input_real
         for line in self.wt_lines + self.ko_lines:
             candidate = source_dir / line / img_key
-            if candidate.exists():
-                return str(candidate)
-        for line in self.wt_lines + self.ko_lines:
-            candidate = self.pth_ds_gen_input / line / img_key
             if candidate.exists():
                 return str(candidate)
         raise FileNotFoundError(f"Original image not found for {img_key}")
@@ -597,9 +596,13 @@ class ConfidenceAnalyzer:
                 try:
                     original_name = Path(img_path).name
                     base, ext = os.path.splitext(original_name)
-                    confidence_pct = int(round(avg_confidence * 100))
-                    correctness_pct = int(round(correctness_rate * 100))
-                    new_filename = f"{base}_conf{confidence_pct}_corr{correctness_pct}{ext}"
+
+                    if self.rename_with_confidence:
+                        confidence_pct = int(round(avg_confidence * 100))
+                        new_filename = f"{base}_conf{confidence_pct}{ext}"
+                    else:
+                        new_filename = original_name
+
                     dest_path = class_dir / new_filename
                     shutil.copy2(img_path, dest_path)
                     copied_files.add(img_path)
@@ -676,15 +679,16 @@ class ConfidenceAnalyzer:
                     with open(json_candidates[0], 'r') as f:
                         cm_data = json.load(f)
 
-                    wt_acc = cm_data['class_accuracy'].get(self.classes[0], 0)
-                    ko_acc = cm_data['class_accuracy'].get(self.classes[1], 0)
+                    class_accuracy = cm_data['class_accuracy']
+                    wt_acc = class_accuracy.get('WT', 0)
+                    ko_acc = class_accuracy.get('KO', 0)
                     overall_acc = cm_data.get('overall_accuracy', 0)
 
                     composite_score = None
                     composite_std = None
                     min_class_acc = None
                     if self.ckpt_select_method == 'composite_score':
-                        class_accuracies = {self.classes[0]: wt_acc, self.classes[1]: ko_acc}
+                        class_accuracies = {'WT': wt_acc, 'KO': ko_acc}
                         composite_score, composite_std, min_class_acc = self._calculate_composite_score(
                             class_accuracies, overall_acc, penalty_weight=self.penalty_weight
                         )
@@ -742,6 +746,13 @@ class ConfidenceAnalyzer:
             f.write(f"CM source: {self.cm_source} (file pattern: {self.cm_file_pattern})\n")
             f.write(f"Split used: {self.split_to_use}\n")
             f.write(f"Description: {filter_descriptions.get(self.filter_type.lower(), 'Custom filter')}\n\n")
+
+            if self.rename_with_confidence:
+                f.write("Filename convention: <original>_conf<XX>.<ext>\n")
+                f.write("  where XX is the average softmax confidence rounded to integer percent.\n\n")
+            else:
+                f.write("Filename convention: original filenames are preserved.\n\n")
+
             f.write(f"Images meeting criteria: {sum(len(v) for v in filtered_images.values())}\n")
             for class_name, images in filtered_images.items():
                 f.write(f"{class_name}: {len(images)} images\n")

@@ -902,6 +902,7 @@ If any of these are missing for a fold, that fold will be skipped and a warning 
 | `ca_ckpt_select_method` | str | Checkpoint selection metric | `"balanced_accuracy"` |
 | `ca_use_test_cm` | str | Which confusion matrix to use for checkpoint selection: `"validation"` or `"test"` | `"validation"` |
 | `ca_split_to_use` | str | Which split to analyze: `"validation"`, `"test"`, or `"all"` | `"validation"` |
+| `ca_rename_with_confidence` | bool | Rename filtered images with confidence in the filename | `True` |
 
 #### Filter Types
 
@@ -928,16 +929,16 @@ If any of these are missing for a fold, that fold will be skipped and a warning 
 output/conf_analyzer/
 ├── high_confidence_correct/
 │   ├── WT/
-│   │   ├── img1_conf98_corr100.png
-│   │   └── img2_conf95_corr100.png
+│   │   ├── img1_conf98.png
+│   │   └── img2_conf95.png
 │   └── KO/
-│       └── img3_conf92_corr100.png
+│       └── img3_conf92.png
 ├── confidence_analysis.csv      # Per-fold, per-class prediction statistics
 ├── used_checkpoints.csv         # Which checkpoints were analyzed per fold
 └── README.txt                   # Description of the filter applied
 ```
 
-Filenames embed the average confidence (`confXX`) and correctness rate (`corrXX`) across all folds.
+When `ca_rename_with_confidence = True` (default), filtered images are renamed with the average softmax confidence in the filename (e.g., `img1_conf98.png`). When `False`, original filenames are preserved. The correctness rate is used internally for filtering but is not included in the filename.
 
 #### Expected Outcome
 
@@ -951,6 +952,17 @@ The retention rate depends on the filter type and the total number of folds. For
 | `unsure` | 10–20% | Borderline cases near the decision boundary |
 
 Exact retention rates vary with the number of folds, the choice of cell lines, and the confidence thresholds.
+
+#### Filename Convention
+
+The naming of filtered images is controlled by `ca_rename_with_confidence`:
+
+| Setting | Filename format | Example |
+|---------|----------------|---------|
+| `True` (default) | `<original_stem>_conf<XX>.<ext>` | `img_0001_conf95.png` |
+| `False` | `<original_filename>` | `img_0001.png` |
+
+When renaming is enabled, `XX` is the **average softmax confidence** across all folds that evaluated the image, rounded to the nearest integer percent. The correctness rate is used internally to select images but is not included in the filename, to keep the filenames concise.
 
 #### Example Workflow
 

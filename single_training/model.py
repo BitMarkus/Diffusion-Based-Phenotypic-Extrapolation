@@ -130,10 +130,28 @@ class CNN_Model():
                 original_conv = self._adapt_first_conv(self.model, self.input_channels)
                 if self.is_pretrained and original_conv:
                     # Transfer pretrained weights by averaging RGB channels
-                    if hasattr(self.model, 'conv1'):
-                        self.model.conv1.weight.data = original_conv.weight.data.mean(dim=1, keepdim=True)
-                    elif hasattr(self.model.features, '0'):
-                        self.model.features[0].weight.data = original_conv.weight.data.mean(dim=1, keepdim=True)
+                    # Different architectures expose the first Conv2d at different locations:
+                    #   - ResNet/ResNeXt/AlexNet: model.conv1
+                    #   - VGG: model.features[0]  (Conv2d directly)
+                    #   - DenseNet: model.features.conv0
+                    #   - EfficientNet: model.features[0][0]  (nested in Conv2dNormActivation)
+                    #   - ConvNeXt: model.features[0][0]
+                    averaged_weight = original_conv.weight.data.mean(dim=1, keepdim=True)
+
+                    if hasattr(self.model, 'conv1') and isinstance(self.model.conv1, nn.Conv2d):
+                        self.model.conv1.weight.data = averaged_weight
+                    elif hasattr(self.model.features, 'conv0') and isinstance(self.model.features.conv0, nn.Conv2d):
+                        self.model.features.conv0.weight.data = averaged_weight
+                    elif hasattr(self.model.features, '__getitem__'):
+                        first = self.model.features[0]
+                        if isinstance(first, nn.Conv2d):
+                            # VGG-style: features[0] is Conv2d
+                            first.weight.data = averaged_weight
+                        elif hasattr(first, '__getitem__'):
+                            # EfficientNet / ConvNeXt-style: features[0][0] is Conv2d
+                            inner = first[0]
+                            if isinstance(inner, nn.Conv2d):
+                                inner.weight.data = averaged_weight
 
             elif self.input_channels not in [1, 3]:
                 raise ValueError("Input must be 1 (grayscale) or 3 (RGB) channels")

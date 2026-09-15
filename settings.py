@@ -67,7 +67,7 @@ setting = {
     # Shuffle dataset
     "ds_shuffle": True,
     # Shuffle seed
-    "ds_shuffle_seed": 43,
+    "ds_shuffle_seed": 42,
     # How many subprocesses are used to load data in parallel
     "ds_num_workers": 3,
     # Validation split settings
@@ -221,7 +221,7 @@ setting = {
     # EfficientNet: efficientnet_b0, efficientnet_b3, efficientnet_b4, efficientnet_b7
     # ConvNeXt: convnext_tiny, convnext_small
     # Custom CNN architecture: custom
-    "cnn_type": "densenet121",  # resnet50
+    "cnn_type": "efficientnet_b0",  # densenet121
     # Pretrained or initialized weights
     "cnn_is_pretrained": True,
     # Initialization type for non-pretrained cnns
@@ -308,6 +308,9 @@ setting = {
     # Decides which actual images to feed through the model for prediction
     # Options: "validation", "test", "all"
     "ca_split_to_use": "validation",
+    # Rename filtered images with the average confidence in the filename
+    # If False, images keep their original filenames
+    "ca_rename_with_confidence": False,
 
     ###########
     # GradCAM #
