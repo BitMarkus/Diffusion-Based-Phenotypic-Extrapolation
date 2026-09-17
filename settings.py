@@ -221,7 +221,7 @@ setting = {
     # EfficientNet: efficientnet_b0, efficientnet_b3, efficientnet_b4, efficientnet_b7
     # ConvNeXt: convnext_tiny, convnext_small
     # Custom CNN architecture: custom
-    "cnn_type": "efficientnet_b0",  # densenet121
+    "cnn_type": "resnet50",  # densenet121
     # Pretrained or initialized weights
     "cnn_is_pretrained": True,
     # Initialization type for non-pretrained cnns

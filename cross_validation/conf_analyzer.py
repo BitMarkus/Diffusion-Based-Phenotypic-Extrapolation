@@ -612,31 +612,11 @@ class ConfidenceAnalyzer:
         self._create_filter_readme(output_dir, filtered_images)
         return output_dir
 
-    # Save results to CSV file.
-    def _save_results_to_csv(self, results: dict, output_path: Path) -> bool:
-        rows = []
-        for dataset_num, checkpoints in results.items():
-            for ckpt_name, pred_data in checkpoints.items():
-                for cls, metrics in pred_data['aggregated_stats'].items():
-                    if not metrics['all_confidences']:
-                        continue
-                    rows.append({
-                        'dataset': dataset_num,
-                        'checkpoint': ckpt_name,
-                        'class': cls,
-                        'mean_confidence': sum(metrics['all_confidences'])/len(metrics['all_confidences']),
-                        'accuracy': len(metrics['correct'])/len(metrics['all_confidences']),
-                        'total_samples': len(metrics['all_confidences']),
-                        'correct_predictions': len(metrics['correct'])
-                    })
-        if rows:
-            pd.DataFrame(rows).to_csv(output_path, index=False)
-            return True
-        return False
-
     # Export information about which checkpoints were used for analysis.
+    # Export the merged per-checkpoint report: accuracies, composite score,
+    # and mean softmax confidences. One row per (dataset, checkpoint).
     def _export_used_checkpoints(self, results: dict) -> bool:
-        print("\n>> Exporting used checkpoints information...")
+        print("\n>> Exporting used checkpoints report...")
 
         if not results:
             print("  WARNING: No results to export!")
@@ -684,14 +664,27 @@ class ConfidenceAnalyzer:
                     ko_acc = class_accuracy.get('KO', 0)
                     overall_acc = cm_data.get('overall_accuracy', 0)
 
-                    composite_score = None
-                    composite_std = None
-                    min_class_acc = None
-                    if self.ckpt_select_method == 'composite_score':
-                        class_accuracies = {'WT': wt_acc, 'KO': ko_acc}
-                        composite_score, composite_std, min_class_acc = self._calculate_composite_score(
-                            class_accuracies, overall_acc, penalty_weight=self.penalty_weight
-                        )
+                    # Balanced accuracy = mean of per-class accuracies
+                    balanced_acc = (wt_acc + ko_acc) / 2
+
+                    # Composite score is always computed
+                    class_accuracies = {'WT': wt_acc, 'KO': ko_acc}
+                    composite_score, _, _ = self._calculate_composite_score(
+                        class_accuracies, overall_acc, penalty_weight=self.penalty_weight
+                    )
+
+                    # Collect mean confidences for this checkpoint
+                    pred_data = checkpoints.get(ckpt_name, {})
+                    aggregated = pred_data.get('aggregated_stats', {})
+
+                    wt_conf_list = aggregated.get('WT', {}).get('all_confidences', [])
+                    ko_conf_list = aggregated.get('KO', {}).get('all_confidences', [])
+
+                    wt_mean_conf = sum(wt_conf_list) / len(wt_conf_list) if wt_conf_list else None
+                    ko_mean_conf = sum(ko_conf_list) / len(ko_conf_list) if ko_conf_list else None
+
+                    all_conf = wt_conf_list + ko_conf_list
+                    overall_mean_conf = sum(all_conf) / len(all_conf) if all_conf else None
 
                     rows.append({
                         'dataset': dataset_num,
@@ -701,17 +694,18 @@ class ConfidenceAnalyzer:
                         'epoch': epoch_num,
                         'wt_accuracy': wt_acc,
                         'ko_accuracy': ko_acc,
+                        'balanced_accuracy': balanced_acc,
                         'overall_accuracy': overall_acc,
                         'composite_score': composite_score,
-                        'composite_std': composite_std,
-                        'min_class_acc': min_class_acc,
+                        'wt_mean_confidence': wt_mean_conf,
+                        'ko_mean_confidence': ko_mean_conf,
+                        'overall_mean_confidence': overall_mean_conf,
                         'selection_method': self.ckpt_select_method if was_filtered else 'none',
                         'max_checkpoints': self.max_ckpts if was_filtered else len(checkpoint_files),
                         'was_filtered': was_filtered,
                         'cm_source': self.cm_source,
                         'cm_file_pattern': self.cm_file_pattern,
                         'split_used': self.split_to_use,
-                        'penalty_weight': self.penalty_weight if self.ckpt_select_method == 'composite_score' else None
                     })
 
                 except Exception as e:
@@ -720,10 +714,10 @@ class ConfidenceAnalyzer:
 
         if rows:
             df = pd.DataFrame(rows)
-            df = df.sort_values(['dataset', 'overall_accuracy'], ascending=[True, False])
-            output_path = self.pth_conf_analizer_results / 'used_checkpoints.csv'
+            df = df.sort_values(['dataset', 'balanced_accuracy'], ascending=[True, False])
+            output_path = self.pth_conf_analizer_results / 'confidence_analysis.csv'
             df.to_csv(output_path, index=False)
-            print(f"  ✓ Saved used checkpoints report to: {output_path}")
+            print(f"  ✓ Saved report to: {output_path}")
             print(f"  ✓ Exported {len(rows)} checkpoint entries across {len(results)} datasets")
             return True
         else:
@@ -767,7 +761,6 @@ class ConfidenceAnalyzer:
         all_results = {}
         available_datasets = self._get_available_datasets()
         total_datasets = len(available_datasets)
-        output_csv = self.pth_conf_analizer_results / 'confidence_analysis.csv'
 
         tqdm.write("Starting confidence analysis...")
         tqdm.write(f"Found {total_datasets} datasets to analyze")
@@ -778,7 +771,6 @@ class ConfidenceAnalyzer:
         if self.ckpt_select_method == 'composite_score':
             tqdm.write(f"  Composite score penalty weight: {self.penalty_weight}")
             tqdm.write(f"  Min class accuracy threshold: {self.min_class_acc_threshold:.0%}")
-        tqdm.write(f"Results will be saved to: {output_csv}")
 
         with tqdm(available_datasets.items(), desc="Processing datasets", position=0, leave=True) as main_pbar:
             for dataset_num, config in main_pbar:
@@ -786,8 +778,6 @@ class ConfidenceAnalyzer:
                 dataset_results = self._analyze_single_dataset(dataset_num, total_datasets)
                 if dataset_results:
                     all_results[dataset_num] = dataset_results
-                    if self._save_results_to_csv(all_results, output_csv):
-                        tqdm.write(f"Progress saved to: {output_csv}")
                 else:
                     tqdm.write(f"Warning: No results for dataset {dataset_num}")
 

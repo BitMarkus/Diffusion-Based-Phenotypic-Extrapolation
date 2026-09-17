@@ -923,6 +923,43 @@ If any of these are missing for a fold, that fold will be skipped and a warning 
 | `min_difference` | Minimum of WT and KO accuracy |
 | `composite_score` | `overall_accuracy − penalty_weight × std(class_accuracies)` |
 
+#### Merged Report: `confidence_analysis.csv`
+
+After all folds are processed, the analyzer writes a single consolidated report to `confidence_analysis.csv`. The file contains one row per analyzed checkpoint, combining metrics from three sources:
+
+| Column | Source | Description |
+|--------|--------|-------------|
+| `dataset` | Cross-validation fold index | 1-based fold number |
+| `test_wt` | Fold configuration | Held-out WT cell line |
+| `test_ko` | Fold configuration | Held-out KO cell line |
+| `checkpoint` | Checkpoint filename | Full name of the `.pt` file |
+| `epoch` | Checkpoint filename | Training epoch the checkpoint was saved at |
+| `wt_accuracy` | Validation CM JSON | Standard accuracy for the WT class |
+| `ko_accuracy` | Validation CM JSON | Standard accuracy for the KO class |
+| `balanced_accuracy` | Derived | Mean of `wt_accuracy` and `ko_accuracy` |
+| `overall_accuracy` | Validation CM JSON | Overall fraction correct across all images |
+| `composite_score` | Derived | `overall_accuracy − penalty_weight × std(class_accuracies)`. Always computed, regardless of the checkpoint selection method. |
+| `wt_mean_confidence` | Prediction data | Mean softmax confidence for WT-class predictions |
+| `ko_mean_confidence` | Prediction data | Mean softmax confidence for KO-class predictions |
+| `overall_mean_confidence` | Prediction data | Mean softmax confidence across all predictions |
+| `selection_method` | Analyzer setting | Checkpoint selection metric, or `"none"` if no filtering was applied |
+| `max_checkpoints` | Analyzer setting | Number of checkpoints kept per fold |
+| `was_filtered` | Derived | `True` if more checkpoints existed than `ca_max_ckpts` |
+| `cm_source` | Analyzer setting | Whether checkpoint selection used `"validation"` or `"test"` confusion matrices |
+| `cm_file_pattern` | Derived | File pattern matched for the CM JSON (`"val"` or `"test"`) |
+| `split_used` | Analyzer setting | Which split was analyzed (`"validation"`, `"test"`, or `"all"`) |
+
+The report is sorted by `dataset` (ascending) and then by `balanced_accuracy` (descending) within each dataset, so the best checkpoint for each fold appears first.
+
+**Example rows** (dataset 3, single checkpoint per fold):
+
+```plaintext
+dataset,test_wt,test_ko,checkpoint,epoch,wt_accuracy,ko_accuracy,balanced_accuracy,overall_accuracy,composite_score,wt_mean_confidence,ko_mean_confidence,overall_mean_confidence,selection_method,max_checkpoints,was_filtered,cm_source,cm_file_pattern,split_used
+3,line_1,line_6,ckpt_pretr_efficientnet_b0_e30_bal0.881_comp0.780_ds3.pt,30,0.92865,0.83323,0.88094,0.87532,0.78000,0.912,0.879,0.897,none,1,False,validation,val,validation
+```
+
+The values match those in the checkpoint filename (`bal0.881_comp0.780`), providing a sanity check that the report reflects the metrics used during checkpoint selection.
+
 #### Output Structure
 
 ```plaintext
@@ -933,8 +970,7 @@ output/conf_analyzer/
 │   │   └── img2_conf95.png
 │   └── KO/
 │       └── img3_conf92.png
-├── confidence_analysis.csv      # Per-fold, per-class prediction statistics
-├── used_checkpoints.csv         # Which checkpoints were analyzed per fold
+├── confidence_analysis.csv      # Per-checkpoint metrics (accuracies + confidence)
 └── README.txt                   # Description of the filter applied
 ```
 
@@ -989,7 +1025,6 @@ When renaming is enabled, `XX` is the **average softmax confidence** across all 
    Using VALIDATION confusion matrices for checkpoint selection
    Using 'VALIDATION' split for analysis
    Checkpoint selection method: balanced_accuracy
-   Results will be saved to: .../output/conf_analyzer/confidence_analysis.csv
    ```
 4. **Checkpoint selection (automatic)**: For each fold, the analyzer identifies all checkpoints, reads their corresponding confusion matrix JSON files, and ranks them by the metric defined in `ca_ckpt_select_method`. The top `ca_max_ckpts` per fold are selected for evaluation. Example console output during this step:
    ```plaintext
@@ -1005,8 +1040,7 @@ When renaming is enabled, `XX` is the **average softmax confidence** across all 
    ```
 6. The results are written to `output/conf_analyzer/`:
    - `high_confidence_correct/` (or the folder matching your filter type) — the selected images, organized by class
-   - `confidence_analysis.csv` — per-fold, per-class statistics
-   - `used_checkpoints.csv` — which checkpoints were used per fold
+   - `confidence_analysis.csv` — per-checkpoint metrics (accuracies, composite score, and mean confidences)
    - `README.txt` — description of the filter applied
 
    ```plaintext
