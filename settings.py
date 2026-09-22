@@ -226,7 +226,7 @@ setting = {
     # EfficientNet: efficientnet_b0, efficientnet_b3, efficientnet_b4, efficientnet_b7
     # ConvNeXt: convnext_tiny, convnext_small
     # Custom CNN architecture: custom
-    "cnn_type": "densenet121",  # densenet121
+    "cnn_type": "convnext_tiny",  # densenet121
     # Pretrained or initialized weights
     "cnn_is_pretrained": True,
     # Initialization type for non-pretrained cnns
@@ -516,20 +516,6 @@ setting = {
     # 'crossval': Forces cross-validation mode (expects dsXX folders)
     # 'single': Forces single training mode (expects timestamp folders)
     "export_mode": "auto",
-
-    ### Excel Exporter (extract_metrics_to_excel.py) ###
-    # Converts TensorBoard logs to Excel with charts
-
-    # Which epoch to use for ROC curves
-    # 'composite_score': Uses epoch with highest composite score from TensorBoard
-    # 'balanced_accuracy': Uses epoch with highest balanced accuracy
-    # 'last': Uses the last available epoch
-    # integer: Uses specific epoch number (1-indexed)
-    "export_excel_roc_epoch": "balanced_accuracy",
-    # Which epoch to use for Precision-Recall curves
-    # Same options as roc_epoch above
-    "export_excel_pr_epoch": "balanced_accuracy",
-
 
     ### UMAP/t-SNE/PaCMAP Plotter (plot_umap_publication.py) ###
     # Creates publication-ready plots from embedding CSV files

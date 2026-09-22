@@ -7,63 +7,197 @@ from pathlib import Path
 from collections import defaultdict
 import re
 # ===== Third-Party Imports =====
-import pandas as pd
 import numpy as np
+import pandas as pd
 from tensorboard.backend.event_processing import event_accumulator
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+# ===== Own Modules =====
+from settings import setting
+
+
+# Default colour palette for ROC / PR chart series
+CHART_COLORS = [
+    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+]
+
 
 class TensorBoardExporter:
 
     #############################################################################################################
     # CONSTRUCTOR
 
-    # Initialize the TensorBoard exporter.
+    # Initialize the exporter with paths and output settings.
+    # If roc_epoch / pr_epoch are not given, the selector is derived from
+    # chckpt_selection_method in settings at the start of export_with_charts.
+    # This keeps the ROC/PR curves in sync with whichever metric was used
+    # to pick the best checkpoint during training.
     # Args:
-    #   logdir (Path): Path to TensorBoard logs directory
-    #   output_file (Path): Path for output Excel file
-    #   prob_dir (Path, optional): Path to directory containing probability .npz files
-    #   roc_epoch (str or int): Which epoch to use for ROC curves
-    #   pr_epoch (str or int): Which epoch to use for PR curves (same options)
-    #   mode (str): Detection mode ('auto', 'crossval', 'single')
+    #   logdir (str | Path | None): TensorBoard log directory
+    #   output_file (str | Path | None): Destination .xlsx path
+    #   prob_dir (str | Path | None): Root directory containing probability .npz files
+    #   roc_epoch (str | int | None): Explicit override for ROC epoch selector
+    #   pr_epoch (str | int | None): Explicit override for PR epoch selector
+    #   mode (str | None): 'auto', 'crossval' or 'single'
     def __init__(
         self,
-        logdir,
-        output_file=None,
-        prob_dir=None,
-        roc_epoch='composite_score',
-        pr_epoch='composite_score',
-        mode='auto'
+        logdir: str | Path | None = None,
+        output_file: str | Path | None = None,
+        prob_dir: str | Path | None = None,
+        roc_epoch: str | int | None = None,
+        pr_epoch: str | int | None = None,
+        mode: str | None = None,
     ) -> None:
-        
-        self.logdir = Path(logdir)
-        self.output_file = Path(output_file) if output_file else Path("./output/train_metrics.xlsx")
-        self.output_file.parent.mkdir(parents=True, exist_ok=True)
-        self.prob_dir = Path(prob_dir) if prob_dir else None
-        self.roc_epoch = roc_epoch
-        self.pr_epoch = pr_epoch
-        self.mode = mode
 
-        self.runs_data = {}
-        self.run_type = None
-        self.saved_checkpoints = {}
+        if mode is None:
+            mode = setting.get('export_mode', 'auto')
+
+        # Keep explicit overrides only; the effective selector is resolved
+        # lazily at export time from chckpt_selection_method.
+        self.roc_epoch_override = roc_epoch
+        self.pr_epoch_override = pr_epoch
+        self.roc_epoch: str | int | None = None
+        self.pr_epoch: str | int | None = None
+
+        if output_file is None:
+            output_file = Path(setting['pth_output']) / "train_metrics.xlsx"
+
+        # logdir must always be supplied by the caller
+        self.logdir: Path = Path(logdir) if logdir else Path(".")
+
+        # prob_dir: if not passed, default to logdir (works for both layouts,
+        # since _get_probability_subdir appends the correct subfolder)
+        if prob_dir is None:
+            prob_dir = self.logdir
+
+        self.output_file: Path = Path(output_file) if output_file else Path("./output.xlsx")
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        self.prob_dir: Path | None = Path(prob_dir) if prob_dir else None
+        self.mode: str = mode
+        self.runs_data: dict = {}
+        self.run_type: str | None = None
+        self.saved_checkpoints: dict = {}
+        self._prob_cache: dict = {}
+
+        print("\nTensorBoardExporter configuration:")
+        print(f"  Logdir: {self.logdir}")
+        print(f"  Output: {self.output_file}")
+        print(f"  Prob dir: {self.prob_dir}")
+        print(f"  ROC epoch override: {self.roc_epoch_override}")
+        print(f"  PR epoch override: {self.pr_epoch_override}")
+        print(f"  Mode: {self.mode}")
 
     #############################################################################################################
     # METHODS
 
-    # Check if run name follows cross-validation pattern (ds01, ds02, etc.).
+    # Calculate balanced accuracy from per-class accuracy columns as a fallback.
+    # Args:
+    #   run_df (pd.DataFrame): DataFrame containing the run metrics
+    #   epoch_1indexed (int): Epoch number (1-indexed, user-visible)
+    # Returns:
+    #   float | None: Mean per-class accuracy, or None if not computable
+    def _calculate_balanced_accuracy_from_per_class(
+        self,
+        run_df: pd.DataFrame,
+        epoch_1indexed: int,
+    ) -> float | None:
+
+        per_class_cols = [col for col in run_df.columns if col.startswith('Accuracy_per_class_')]
+        if not per_class_cols:
+            return None
+
+        epoch_row = run_df[run_df['epoch'] == epoch_1indexed]
+        if epoch_row.empty:
+            return None
+
+        class_accs = []
+        for col in per_class_cols:
+            val = epoch_row[col].values[0]
+            if not np.isnan(val):
+                class_accs.append(val)
+
+        if not class_accs:
+            return None
+
+        return float(np.mean(class_accs))
+
+    # Find the best epoch for a given metric column.
+    # Falls back to computed balanced accuracy if the column is missing.
+    # Returns 1-indexed epochs (user-visible), matching df['epoch'].
+    # Args:
+    #   run_df (pd.DataFrame): DataFrame containing the run metrics
+    #   metric_name (str): Column name to optimise
+    # Returns:
+    #   int | None: Best epoch (1-indexed), or None if not found
+    def _get_best_epoch_by_metric(
+        self,
+        run_df: pd.DataFrame,
+        metric_name: str = 'Composite_score',
+    ) -> int | None:
+
+        if metric_name not in run_df.columns:
+            print(f"      Metric '{metric_name}' not found in DataFrame")
+
+            if metric_name == 'Balanced_accuracy':
+                best_epoch = None
+                best_score = -float('inf')
+
+                for epoch in run_df['epoch'].values:
+                    bal_acc = self._calculate_balanced_accuracy_from_per_class(run_df, epoch)
+                    if bal_acc is not None and bal_acc > best_score:
+                        best_score = bal_acc
+                        best_epoch = int(epoch)
+
+                if best_epoch is not None:
+                    print(f"      Calculated balanced accuracy from per-class metrics (fallback): "
+                          f"best epoch={best_epoch}, score={best_score:.4f}")
+                    return best_epoch
+
+            return None
+
+        scores = run_df[metric_name].values
+        epochs = run_df['epoch'].values
+        valid = ~np.isnan(scores)
+
+        if not np.any(valid):
+            return None
+
+        best_idx = np.argmax(scores[valid])
+        best_epoch = int(epochs[valid][best_idx])
+        best_score = scores[valid][best_idx]
+
+        print(f"      Best epoch by {metric_name}: {best_epoch} (score={best_score:.4f})")
+        return best_epoch
+
+    # Check whether a run folder name matches the cross-validation pattern (dsXX).
+    # Args:
+    #   run_name (str): Run folder name
+    # Returns:
+    #   bool: True if the name matches the cross-validation pattern
     def _is_cross_validation_run(self, run_name: str) -> bool:
         return bool(re.match(r'^ds\d{2}$', run_name))
 
-    # Check if run name follows timestamp pattern (YYYYMMDD-HHMMSS).
+    # Check whether a run folder name matches the single-training timestamp pattern.
+    # Args:
+    #   run_name (str): Run folder name
+    # Returns:
+    #   bool: True if the name matches the timestamp pattern
     def _is_timestamp_run(self, run_name: str) -> bool:
         return bool(re.match(r'^\d{8}-\d{6}$', run_name))
 
-    # Auto-detect whether we're dealing with cross-validation or single training.
+    # Detect the run type from the list of discovered runs.
+    # Respects an explicitly forced mode set via settings.
+    # Args:
+    #   runs (list): List of (run_path, run_name, event_files) tuples
+    # Returns:
+    #   str: 'crossval' or 'single'
     def _detect_run_type(self, runs: list) -> str:
+
         if self.mode == 'crossval':
             print("✓ Mode forced: CROSS-VALIDATION")
             return 'crossval'
-        elif self.mode == 'single':
+
+        if self.mode == 'single':
             print("✓ Mode forced: SINGLE TRAINING")
             return 'single'
 
@@ -79,99 +213,119 @@ class TensorBoardExporter:
         if crossval_count > 0 and timestamp_count == 0:
             print(f"✓ Auto-detected: CROSS-VALIDATION mode ({crossval_count} dsXX folders)")
             return 'crossval'
-        elif timestamp_count > 0 and crossval_count == 0:
+
+        if timestamp_count > 0 and crossval_count == 0:
             print(f"✓ Auto-detected: SINGLE TRAINING mode ({timestamp_count} timestamp folders)")
             return 'single'
-        elif crossval_count > 0 and timestamp_count > 0:
-            print(f"⚠ Mixed run types detected! Using CROSS-VALIDATION mode as default.")
-            return 'crossval'
-        else:
-            if list(self.logdir.glob("events.out.tfevents.*")):
-                print(f"✓ Auto-detected: SINGLE TRAINING mode (direct event files)")
-                return 'single'
-            print(f"⚠ Could not determine run type. Using CROSS-VALIDATION mode as default.")
+
+        if crossval_count > 0 and timestamp_count > 0:
+            print("⚠ Mixed run types detected! Using CROSS-VALIDATION mode as default.")
+            print(f"   ({crossval_count} dsXX, {timestamp_count} timestamp)")
             return 'crossval'
 
-    # Get display name for Excel sheet based on run type.
+        print("⚠ Could not determine run type. Using CROSS-VALIDATION mode as default.")
+        return 'crossval'
+
+    # Convert a run folder name into a display name for the Excel sheet.
+    # Args:
+    #   run_name (str): Run folder name
+    # Returns:
+    #   str: Display name
     def _get_display_name(self, run_name: str) -> str:
+
         if self.run_type == 'crossval':
             return run_name
-        else:
-            if self._is_timestamp_run(run_name):
-                return run_name[:31]
-            return "training_run"
 
-    # Get the probability subdirectory based on run type.
-    def _get_probability_subdir(self, run_name: str):
+        if self._is_timestamp_run(run_name):
+            return run_name[:31]
+
+        return "training_run"
+
+    # Resolve the probability subdirectory for a run, supporting new and old layouts.
+    # Args:
+    #   run_name (str): Run folder name
+    # Returns:
+    #   Path | None: Probability directory, or None if unavailable
+    def _get_probability_subdir(self, run_name: str) -> Path | None:
+
         if not self.prob_dir:
             return None
 
         if self.run_type == 'crossval':
-            # Convert dsXX to dataset_XX
-            dataset_num = run_name.replace("ds", "")
-            dataset_name = f"dataset_{dataset_num}"
+            # Support the new dataset_X/logs/probabilities layout
+            if run_name.startswith("ds") and run_name[2:].isdigit():
+                dataset_folder = f"dataset_{int(run_name[2:])}"
+                candidates = [
+                    self.prob_dir / dataset_folder / "logs" / "probabilities",
+                    self.logdir / dataset_folder / "logs" / "probabilities",
+                    self.logdir / "logs" / dataset_folder / "probabilities",
+                ]
+                for c in candidates:
+                    if c.exists():
+                        return c
 
-            # NEW structure: dataset_X/logs/probabilities/
-            prob_subdir = self.prob_dir / dataset_name / "logs" / "probabilities"
+            # Old layout: dsXX/probabilities/
+            prob_subdir = self.prob_dir / run_name / "probabilities"
             if prob_subdir.exists():
                 return prob_subdir
 
-            # OLD structure: logs/dsXX/probabilities/
             prob_subdir = self.logdir / run_name / "probabilities"
             if prob_subdir.exists():
                 return prob_subdir
 
-            # Alternative: self.logdir is the logs folder with dataset_X
-            prob_subdir = self.logdir / dataset_name / "logs" / "probabilities"
+            # Old layout alt: logdir/logs/dsXX/probabilities/
+            prob_subdir = self.logdir / "logs" / run_name / "probabilities"
             if prob_subdir.exists():
                 return prob_subdir
 
-            return None
-        else:
-            # Single training: same as before
-            if self.prob_dir.name == "probabilities":
-                return self.prob_dir
-            prob_subdir = self.logdir / "probabilities"
-            if prob_subdir.exists():
-                return prob_subdir
-            if run_name and self.logdir.name != run_name:
-                prob_subdir = self.logdir / run_name / "probabilities"
-            else:
-                prob_subdir = self.logdir / "probabilities"
+            # Fallback so downstream glob reports a real path
+            if run_name.startswith("ds") and run_name[2:].isdigit():
+                dataset_folder = f"dataset_{int(run_name[2:])}"
+                return self.prob_dir / dataset_folder / "logs" / "probabilities"
+
+            return self.prob_dir / run_name / "probabilities"
+
+        # Single training
+        if self.prob_dir.name == "probabilities":
+            return self.prob_dir
+
+        prob_subdir = self.logdir / "probabilities"
+        if prob_subdir.exists():
             return prob_subdir
 
-    # Get saved checkpoints for a run by looking for .pt files.
+        if run_name and self.logdir.name != run_name:
+            prob_subdir = self.logdir / run_name / "probabilities"
+        else:
+            prob_subdir = self.logdir / "probabilities"
+
+        return prob_subdir
+
+    # Collect the set of epochs (1-indexed, user-visible) for which checkpoints were saved.
+    # Cross-validation checkpoints live in one of two layouts:
+    #   - New system: <run_path>/checkpoints/
+    #   - Old system: <run_path>/<run_name>/checkpoints/  or  <logdir>/<run_name>/checkpoints/
+    # Args:
+    #   run_path (Path): Run directory
+    #   run_name (str): Run folder name
+    # Returns:
+    #   set: Set of 1-indexed epochs with saved checkpoints
     def _get_saved_checkpoints(self, run_path: Path, run_name: str) -> set:
-        saved_epochs = set()
-        checkpoints_dir = None
+
+        saved_epochs: set = set()
+        checkpoints_dir: Path | None = None
 
         if self.run_type == 'crossval':
-            # Try multiple possible locations
-            
-            # NEW structure: checkpoints are in dataset_X/checkpoints/
-            dataset_num = run_name.replace("ds", "")
-            dataset_name = f"dataset_{dataset_num}"
-            
-            # If run_path is the dataset folder
-            if run_path.name.startswith("dataset_"):
-                checkpoints_dir = run_path / "checkpoints"
-            # If run_path is the logs folder
-            elif run_path.name == "logs":
-                checkpoints_dir = run_path.parent / "checkpoints"
-            # Try by dataset name
-            if not checkpoints_dir or not checkpoints_dir.exists():
-                checkpoints_dir = self.logdir / dataset_name / "checkpoints"
-            # Try parent (old structure)
-            if not checkpoints_dir or not checkpoints_dir.exists():
-                checkpoints_dir = self.logdir.parent / dataset_name / "checkpoints"
-            # OLD structure: checkpoints were in the dataset folder
-            if not checkpoints_dir or not checkpoints_dir.exists():
-                checkpoints_dir = self.logdir / run_name / "checkpoints"
-            # Final fallback
-            if not checkpoints_dir or not checkpoints_dir.exists():
-                checkpoints_dir = self.logdir.parent / run_name / "checkpoints"
+            candidates = [
+                run_path / "checkpoints",              # NEW: dataset_X/checkpoints/
+                run_path / "logs" / "checkpoints",     # in case logs has its own
+                run_path / run_name / "checkpoints",   # old fallback
+                self.logdir / run_name / "checkpoints",
+            ]
+            for c in candidates:
+                if c.exists() and list(c.glob("*.pt")):
+                    checkpoints_dir = c
+                    break
         else:
-            # Single training: same as before
             checkpoints_dir = run_path.parent.parent / "checkpoints"
             if not checkpoints_dir.exists():
                 checkpoints_dir = run_path.parent / "checkpoints"
@@ -179,30 +333,118 @@ class TensorBoardExporter:
                 checkpoints_dir = run_path / "checkpoints"
 
         if not checkpoints_dir or not checkpoints_dir.exists():
+            print(f"    No checkpoints directory found for {run_name}")
             return saved_epochs
 
         checkpoint_files = list(checkpoints_dir.glob("*.pt"))
+        print(f"    Found {len(checkpoint_files)} checkpoint files in {checkpoints_dir}")
 
+        # Checkpoint filenames use 1-indexed epochs (see train.py: f"e{epoch+1:02d}")
         for f in checkpoint_files:
             try:
                 match = re.search(r'_e(\d+)', f.stem)
                 if match:
-                    epoch = int(match.group(1))
-                    saved_epochs.add(epoch - 1)
+                    epoch_from_filename = int(match.group(1))
+                    saved_epochs.add(epoch_from_filename)
                 else:
                     match = re.search(r'(\d+)\.pt$', f.name)
                     if match:
-                        epoch = int(match.group(1))
-                        saved_epochs.add(epoch - 1)
-            except Exception:
+                        epoch_from_filename = int(match.group(1))
+                        saved_epochs.add(epoch_from_filename)
+            except (ValueError, IndexError):
                 continue
 
         return saved_epochs
 
-    # Extract metric from events with optional target value.
+    # Discover all TensorBoard runs in the configured logdir.
+    # Supports the new dataset_X/logs layout, the old logs/dsXX layout,
+    # a single-run layout, and a generic fallback.
+    # Returns:
+    #   list: List of (run_path, run_name, event_files) tuples
+    def find_runs(self) -> list:
+
+        runs: list = []
+
+        # Case 1: logdir itself contains event files (single run)
+        if list(self.logdir.glob("events.out.tfevents.*")):
+            runs.append((self.logdir, self.logdir.name, [self.logdir]))
+            print(f"✓ Single run: {self.logdir.name}")
+        else:
+            # Case 2 (NEW layout): logdir contains dataset_X/ folders, each with logs/
+            new_layout_runs = []
+
+            for child in self.logdir.iterdir():
+                if not child.is_dir():
+                    continue
+
+                logs_dir = child / "logs"
+                if logs_dir.is_dir() and list(logs_dir.rglob("events.out.tfevents.*")):
+
+                    if child.name.startswith("dataset_"):
+                        num = child.name.replace("dataset_", "")
+                        try:
+                            run_name = f"ds{int(num):02d}"
+                        except ValueError:
+                            run_name = child.name
+                    elif child.name.startswith("ds"):
+                        run_name = child.name
+                    else:
+                        run_name = child.name
+
+                    event_files = list(child.rglob("events.out.tfevents.*"))
+                    new_layout_runs.append((child, run_name, event_files))
+
+            if new_layout_runs:
+                runs = new_layout_runs
+                print(f"✓ Found {len(runs)} training run(s) (new layout: dataset_X/logs/)")
+            else:
+                # Case 3 (OLD layout): logdir contains a single 'logs' folder
+                logs_dir = self.logdir / "logs"
+                if logs_dir.is_dir():
+                    for child in logs_dir.iterdir():
+                        if not child.is_dir():
+                            continue
+                        event_files = list(child.rglob("events.out.tfevents.*"))
+                        if event_files:
+                            runs.append((child, child.name, event_files))
+                    if runs:
+                        print(f"✓ Found {len(runs)} training run(s) (old layout: logs/dsXX/)")
+
+                # Case 4 (fallback): every direct child with event files
+                if not runs:
+                    for child in self.logdir.iterdir():
+                        if not child.is_dir():
+                            continue
+                        event_files = list(child.rglob("events.out.tfevents.*"))
+                        if event_files:
+                            runs.append((child, child.name, event_files))
+                    if runs:
+                        print(f"✓ Found {len(runs)} training run(s) (fallback layout)")
+
+        if not runs:
+            print(f"❌ No runs found in {self.logdir}")
+            return []
+
+        self.run_type = self._detect_run_type(runs)
+        return runs
+
+    # Extract a scalar series from a list of TensorBoard events.
+    # Handles both plain scalar events and dict-valued events.
+    # Args:
+    #   events (list): List of TensorBoard scalar events
+    #   metric_name (str): Fallback key for dict-valued events
+    #   target_value (str | None): Preferred key for dict-valued events
+    # Returns:
+    #   tuple: (sorted_steps, averaged_values) or (None, None)
     @staticmethod
-    def _extract_metric_from_events(events, metric_name: str, target_value: str = None):
+    def _extract_metric_from_events(
+        events: list,
+        metric_name: str,
+        target_value: str | None = None,
+    ) -> tuple:
+
         steps, values = [], []
+
         for e in events:
             if isinstance(e.value, dict):
                 if target_value and target_value in e.value:
@@ -214,86 +456,29 @@ class TensorBoardExporter:
             else:
                 steps.append(e.step)
                 values.append(e.value)
+
         if not steps:
             return None, None
+
         d = defaultdict(list)
         for s, v in zip(steps, values):
             d[s].append(v)
+
         steps_sorted = sorted(d.keys())
         return steps_sorted, [np.mean(d[s]) for s in steps_sorted]
 
-    # Get best epoch by a specific metric.
-    def _get_best_epoch_by_metric(self, run_df, metric_name: str):
-        if metric_name not in run_df.columns:
-            return None
+    # Extract all scalar metrics for a single run into a DataFrame.
+    # Adds the balanced accuracy fallback and the Checkpoint column.
+    # The 'epoch' column is 1-indexed (user-visible), matching train.py's display.
+    # The Checkpoint column contains 'X' for cross-validation (checkpoint saved)
+    # or 'Saved' for single training, and is empty otherwise.
+    # Args:
+    #   run_path (Path): Run directory
+    #   run_name (str): Run folder name
+    # Returns:
+    #   tuple: (DataFrame | None, saved_checkpoints_set)
+    def extract_run_data(self, run_path: Path, run_name: str) -> tuple:
 
-        scores = run_df[metric_name].values
-        epochs = run_df['epoch'].values
-        valid = ~np.isnan(scores)
-
-        if not np.any(valid):
-            return None
-
-        best_idx = np.argmax(scores[valid])
-        return int(epochs[valid][best_idx])
-
-    # Find runs in the log directory (supports both old and new structures)
-    def find_runs(self) -> list:
-        all_event_files = list(self.logdir.rglob("events.out.tfevents.*"))
-
-        if not all_event_files:
-            print(f"❌ No event files found in {self.logdir}")
-            return []
-
-        folders = defaultdict(list)
-        
-        for ef in all_event_files:
-            parent = ef.parent
-            
-            # NEW structure: dataset_X/logs/
-            if parent.name == "logs" and parent.parent.name.startswith("dataset_"):
-                run_name = parent.parent.name.replace("dataset_", "ds")
-                folders[parent.parent].append(ef)
-            
-            # NEW structure (alternative): dataset_X/logs/ with run_name already
-            elif parent.name == "logs" and parent.parent.name.startswith("ds"):
-                run_name = parent.parent.name
-                folders[parent.parent].append(ef)
-            
-            # OLD structure: logs/dsXX/
-            elif parent.name.startswith("ds") and parent.parent.name == "logs":
-                run_name = parent.name
-                folders[parent].append(ef)
-            
-            # Single training: direct event files
-            elif parent.name == "logs" and parent.parent.name not in ["cross_validation", "acv_results"]:
-                # Single training - use the timestamp folder name
-                run_name = parent.parent.name
-                folders[parent.parent].append(ef)
-            
-            # Fallback: use the folder name
-            else:
-                run_name = parent.name
-                folders[parent].append(ef)
-
-        runs = []
-        for folder_path, files in folders.items():
-            # Determine run name from folder structure
-            if folder_path.name.startswith("dataset_"):
-                run_name = folder_path.name.replace("dataset_", "ds")
-            elif folder_path.name.startswith("ds") and folder_path.parent.name == "logs":
-                run_name = folder_path.name
-            else:
-                run_name = folder_path.name
-            runs.append((folder_path, run_name, files))
-
-        if runs:
-            self.run_type = self._detect_run_type(runs)
-
-        return runs
-
-    # Extract all scalar data from a run's event files.
-    def extract_run_data(self, run_path: Path, run_name: str):
         run_path = Path(run_path)
         event_files = list(run_path.rglob("events.out.tfevents.*"))
         if not event_files:
@@ -301,14 +486,15 @@ class TensorBoardExporter:
 
         saved_checkpoints = self._get_saved_checkpoints(run_path, run_name)
         self.saved_checkpoints[run_name] = saved_checkpoints
+        print(f"    Saved checkpoints (1-indexed): {sorted(saved_checkpoints)}")
 
-        all_metrics = defaultdict(list)
+        all_metrics: dict = defaultdict(list)
 
         for ef in event_files:
             try:
                 ea = event_accumulator.EventAccumulator(
                     str(ef),
-                    size_guidance=event_accumulator.STORE_EVERYTHING_SIZE_GUIDANCE
+                    size_guidance=event_accumulator.STORE_EVERYTHING_SIZE_GUIDANCE,
                 )
                 ea.Reload()
 
@@ -330,8 +516,10 @@ class TensorBoardExporter:
                         continue
 
                     tag_lower = tag.lower()
+
                     if 'loss' in tag_lower:
                         mname = 'Loss_train' if 'train' in tag_lower else ('Loss_val' if 'val' in tag_lower else None)
+
                     elif 'accuracy' in tag_lower or 'acc' in tag_lower:
                         if 'train' in tag_lower:
                             mname = 'Accuracy_train_standard' if 'standard' in tag_lower else 'Accuracy_train_weighted'
@@ -346,36 +534,48 @@ class TensorBoardExporter:
                                 mname = f'Accuracy_per_class_{tag.split("/")[-1]}'
                         else:
                             continue
+
                     elif 'balanced' in tag_lower and 'accuracy' in tag_lower:
                         mname = 'Balanced_accuracy'
+
                     elif 'f1' in tag_lower:
                         mname = 'F1_weighted' if 'weighted' in tag_lower else 'F1_macro'
+
                     elif 'auc' in tag_lower:
                         mname = 'AUC_overall' if 'class' not in tag_lower else f'AUC_{tag.split("/")[-1]}'
+
                     elif 'ap' in tag_lower or 'average_precision' in tag_lower:
                         mname = 'AP_overall' if 'class' not in tag_lower else f'AP_{tag.split("/")[-1]}'
+
                     elif 'lr' in tag_lower or 'learning_rate' in tag_lower:
                         mname = 'Learning_rate'
+
                     elif 'composite' in tag_lower:
                         mname = 'Composite_score'
+
                     elif 'gpu_memory' in tag_lower:
                         mname = 'GPU_memory_usage'
+
                     elif 'class_count' in tag_lower and 'data' in tag_lower:
                         mname = f'Class_count_{tag.split("/")[-1]}'
+
                     elif 'class_weight' in tag_lower and 'data' in tag_lower:
                         mname = f'Class_weight_{tag.split("/")[-1]}'
+
                     else:
                         continue
 
                     if mname:
                         all_metrics[mname].extend(zip(s, v))
 
-            except Exception:
+            except Exception as e:
+                print(f"    WARNING: Failed to read event file {ef.name}: {e}")
                 continue
 
         if not all_metrics:
             return None, saved_checkpoints
 
+        # TensorBoard steps are 0-indexed; convert to 1-indexed (user-visible)
         all_epochs_0indexed = sorted(set().union(*[set(dict(pairs).keys()) for pairs in all_metrics.values()]))
         all_epochs_1indexed = [ep + 1 for ep in all_epochs_0indexed]
 
@@ -386,9 +586,9 @@ class TensorBoardExporter:
 
         df = pd.DataFrame(temp_data)
 
-        # Calculate balanced accuracy if not present (fallback)
         if 'Balanced_accuracy' not in df.columns:
             per_class_cols = [col for col in df.columns if col.startswith('Accuracy_per_class_')]
+
             if per_class_cols:
                 bal_acc_values = []
                 for idx, epoch in enumerate(all_epochs_1indexed):
@@ -402,13 +602,25 @@ class TensorBoardExporter:
                     else:
                         bal_acc_values.append(np.nan)
                 df['Balanced_accuracy'] = bal_acc_values
+                print("    Added Balanced_accuracy column (calculated from per-class accuracies as fallback)")
+            else:
+                df['Balanced_accuracy'] = np.nan
+        else:
+            print("    Balanced_accuracy column loaded directly from TensorBoard")
 
-        # Build checkpoint column
+        # Build the Checkpoint column.
+        # Cross-validation: 'X' when a checkpoint was saved at this epoch.
+        # Single training: 'Saved' when a checkpoint was saved at this epoch.
+        # Everything else: empty string.
         checkpoint_column = []
-        for ep_1indexed, ep_0indexed in zip(all_epochs_1indexed, all_epochs_0indexed):
-            cell_value = ''
-            if ep_0indexed in saved_checkpoints:
-                cell_value = 'X'
+        for ep_1indexed in all_epochs_1indexed:
+            is_saved = ep_1indexed in saved_checkpoints
+
+            if self.run_type == 'single':
+                cell_value = 'Saved' if is_saved else ''
+            else:
+                cell_value = 'X' if is_saved else ''
+
             checkpoint_column.append(cell_value)
 
         df.insert(1, 'Checkpoint', checkpoint_column)
@@ -418,12 +630,32 @@ class TensorBoardExporter:
 
         return df, saved_checkpoints
 
-    # Load probability data for a run.
-    def _load_probabilities_for_run(self, run_df, epoch_choice, run_name=None):
+    # Load probability arrays for a run at a chosen epoch.
+    # Results are cached per (run_name, epoch_choice).
+    # .npz filenames are 0-indexed internally; they are converted to 1-indexed
+    # (user-visible) on load, so all comparisons below use user-visible epochs.
+    # Args:
+    #   run_df (pd.DataFrame): DataFrame with run metrics (used for metric-based selection)
+    #   epoch_choice (str | int): 'last', 'composite_score', 'balanced_accuracy', or an int
+    #   run_name (str | None): Run folder name
+    # Returns:
+    #   tuple: (probs, labels, class_names, selected_epoch_1indexed) or (None, None, None, None)
+    def load_probabilities_for_run(
+        self,
+        run_df: pd.DataFrame,
+        epoch_choice: str | int,
+        run_name: str | None = None,
+    ) -> tuple:
+
+        cache_key = (run_name, str(epoch_choice))
+        if cache_key in self._prob_cache:
+            return self._prob_cache[cache_key]
+
         if not self.prob_dir or not self.prob_dir.exists():
             return None, None, None, None
 
         prob_subdir = self._get_probability_subdir(run_name)
+
         if not prob_subdir or not prob_subdir.exists():
             prob_subdir = self.prob_dir
 
@@ -438,14 +670,17 @@ class TensorBoardExporter:
                 npz_files = sorted(alt_dir.glob("probabilities_epoch_*.npz"))
 
         if not npz_files:
+            print(f"      No probability files found in {prob_subdir}")
             return None, None, None, None
 
+        # .npz filenames are 0-indexed; convert to 1-indexed (user-visible)
+        # to match df['epoch'].
         epoch_files = []
         for f in npz_files:
             try:
-                ep = int(f.stem.split('_')[-1])
-                epoch_files.append((ep, f))
-            except:
+                ep_internal = int(f.stem.split('_')[-1])
+                epoch_files.append((ep_internal + 1, f))
+            except (ValueError, IndexError):
                 continue
 
         if not epoch_files:
@@ -458,6 +693,8 @@ class TensorBoardExporter:
 
         if epoch_choice == 'last':
             selected_epoch, selected_file = epoch_files[-1]
+            print(f"      Using last epoch: {selected_epoch}")
+
         elif epoch_choice == 'composite_score':
             best_epoch = self._get_best_epoch_by_metric(run_df, 'Composite_score')
             if best_epoch is not None:
@@ -466,7 +703,9 @@ class TensorBoardExporter:
                         selected_epoch, selected_file = ep, f
                         break
             if selected_epoch is None:
+                print("      WARNING: Best composite_score epoch not found, using last epoch")
                 selected_epoch, selected_file = epoch_files[-1]
+
         elif epoch_choice == 'balanced_accuracy':
             best_epoch = self._get_best_epoch_by_metric(run_df, 'Balanced_accuracy')
             if best_epoch is not None:
@@ -475,7 +714,9 @@ class TensorBoardExporter:
                         selected_epoch, selected_file = ep, f
                         break
             if selected_epoch is None:
+                print("      WARNING: Best balanced_accuracy epoch not found, using last epoch")
                 selected_epoch, selected_file = epoch_files[-1]
+
         else:
             try:
                 target = int(epoch_choice)
@@ -483,21 +724,33 @@ class TensorBoardExporter:
                     if ep == target:
                         selected_epoch, selected_file = ep, f
                         break
-                if selected_epoch is None:
+                else:
+                    print(f"      WARNING: Specified epoch {target} not found, using last epoch")
                     selected_epoch, selected_file = epoch_files[-1]
-            except:
+            except (ValueError, TypeError):
+                print(f"      WARNING: Invalid epoch choice '{epoch_choice}', using last epoch")
                 selected_epoch, selected_file = epoch_files[-1]
 
+        print(f"      Using epoch {selected_epoch} from {selected_file.name}")
         data = np.load(selected_file)
         probs = data['probabilities']
         labels = data['labels']
         class_names = data['classes'].tolist() if 'classes' in data else [f'Class_{i}' for i in range(probs.shape[1])]
 
-        return probs, labels, class_names, selected_epoch
+        result = (probs, labels, class_names, selected_epoch)
+        self._prob_cache[cache_key] = result
+        return result
 
-    # Compute ROC curves.
+    # Compute one-vs-rest ROC curves for all classes.
+    # Args:
+    #   probs (np.ndarray): Predicted probabilities, shape (N, C)
+    #   labels (np.ndarray): Ground-truth labels, shape (N,)
+    #   class_names (list): Class names
+    # Returns:
+    #   list: List of (class_name, auc_value, fpr, tpr) tuples
     @staticmethod
-    def _compute_roc(probs, labels, class_names):
+    def compute_roc(probs: np.ndarray, labels: np.ndarray, class_names: list) -> list:
+
         curves = []
         for i, cls in enumerate(class_names):
             y_true = (labels == i).astype(int)
@@ -505,11 +758,19 @@ class TensorBoardExporter:
             fpr, tpr, _ = roc_curve(y_true, y_score)
             roc_auc = auc(fpr, tpr)
             curves.append((cls, roc_auc, fpr, tpr))
+
         return curves
 
-    # Compute PR curves.
+    # Compute one-vs-rest precision-recall curves for all classes.
+    # Args:
+    #   probs (np.ndarray): Predicted probabilities, shape (N, C)
+    #   labels (np.ndarray): Ground-truth labels, shape (N,)
+    #   class_names (list): Class names
+    # Returns:
+    #   list: List of (class_name, ap_value, recall, precision) tuples
     @staticmethod
-    def _compute_pr(probs, labels, class_names):
+    def compute_pr(probs: np.ndarray, labels: np.ndarray, class_names: list) -> list:
+
         curves = []
         for i, cls in enumerate(class_names):
             y_true = (labels == i).astype(int)
@@ -517,19 +778,34 @@ class TensorBoardExporter:
             precision, recall, _ = precision_recall_curve(y_true, y_score)
             ap = average_precision_score(y_true, y_score)
             curves.append((cls, ap, recall, precision))
+
         return curves
 
-    # Export all data to Excel with charts.
+    # Export all discovered runs to an Excel workbook with scalar charts,
+    # ROC curves and precision-recall curves.
+    # Prints a warning if the epoch chosen for ROC/PR is not one of the
+    # epochs where a checkpoint was actually saved during training,
+    # which indicates a mismatch between the training-time checkpoint
+    # selection method and the current export setting.
+    # Returns:
+    #   None
     def export_with_charts(self) -> None:
+
+        # Resolve once for the whole export so all folds use the same selector
+        self.roc_epoch = self._resolve_selector()
+        self.pr_epoch = self.roc_epoch
+
         print("=" * 60)
         print("TENSORBOARD EXPORTER – 3-COLUMN CHART GRID")
         print("=" * 60)
         print(f"Logdir: {self.logdir}")
         print(f"Output: {self.output_file}")
+
         if self.prob_dir:
             print(f"Probability dir: {self.prob_dir}")
-        print(f"ROC epoch selection: {self.roc_epoch}")
-        print(f"PR epoch selection: {self.pr_epoch}")
+
+        print(f"ROC/PR epoch selector: {self.roc_epoch}")
+        print(f"  (resolved from chckpt_selection_method = {setting.get('chckpt_selection_method')})")
 
         runs = self.find_runs()
         if not runs:
@@ -541,20 +817,30 @@ class TensorBoardExporter:
         for run_path, run_name, event_files in runs:
             display_name = self._get_display_name(run_name)
             print(f"  {run_name} -> sheet '{display_name}'")
+
             df, saved_checkpoints = self.extract_run_data(run_path, run_name)
+
             if df is not None and len(df) > 0:
                 self.runs_data[display_name] = (df, run_name, saved_checkpoints)
                 print(f"    -> {len(df)} epochs, {len(df.columns)-1} metrics")
+
                 if saved_checkpoints:
                     print(f"    -> Saved checkpoints at epochs: {sorted(saved_checkpoints)}")
+
+                # Warn if the epoch chosen for ROC/PR is not one of the epochs
+                # where a checkpoint was saved. This indicates that the export
+                # setting (chckpt_selection_method) does not match the setting
+                # used during training.
+                self._warn_on_checkpoint_epoch_mismatch(df, saved_checkpoints)
             else:
-                print(f"    -> No data extracted")
+                print("    -> No data extracted")
 
         if not self.runs_data:
             print("No scalar data to export.")
             return
 
         print("\nWriting Excel file...")
+
         with pd.ExcelWriter(self.output_file, engine='xlsxwriter') as writer:
             workbook = writer.book
 
@@ -563,21 +849,23 @@ class TensorBoardExporter:
                 sheet_name = sheet_name.replace('*', '_').replace('?', '_').replace('/', '_')
                 print(f"\n--- Run: {original_run_name} -> sheet '{sheet_name}'")
 
-                # Write scalar table
                 df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=0, startcol=0)
                 worksheet = writer.sheets[sheet_name]
 
-                note = "Checkpoint column: 'X' = checkpoint saved"
+                if self.run_type == 'single':
+                    note = "Checkpoint column: 'Saved' = checkpoint saved at this epoch, Empty = no checkpoint"
+                else:
+                    note = "Checkpoint column: 'X' = checkpoint saved at this epoch"
+
                 worksheet.write(0, len(df.columns), note, workbook.add_format({'italic': True, 'color': '#666666', 'font_size': 8}))
 
                 for i, col in enumerate(df.columns):
                     max_len = max(df[col].astype(str).str.len().max(), len(col)) + 2
                     worksheet.set_column(i, i, min(max_len, 30))
 
-                # Raw ROC/PR data tables
                 scalar_cols = len(df.columns)
                 roc_start_col = scalar_cols + 1
-                pr_start_col = None
+                pr_start_col = roc_start_col + 1        # safe default in case ROC is skipped
                 roc_curves = None
                 pr_curves = None
                 detail_row_roc = None
@@ -586,59 +874,78 @@ class TensorBoardExporter:
                 pr_selected_epoch = None
 
                 if self.prob_dir and self.prob_dir.exists():
-                    # Load probabilities for ROC
-                    probs, labels, class_names, roc_selected_epoch = self._load_probabilities_for_run(
+
+                    probs, labels, class_names, roc_selected_epoch = self.load_probabilities_for_run(
                         df, self.roc_epoch, original_run_name
                     )
+
                     if probs is not None:
-                        roc_curves = self._compute_roc(probs, labels, class_names)
-                        header_text = f"ROC CURVES (RAW DATA) - Epoch {roc_selected_epoch + 1}" if roc_selected_epoch is not None else "ROC CURVES (RAW DATA)"
+                        roc_curves = self.compute_roc(probs, labels, class_names)
+
+                        if roc_selected_epoch is not None:
+                            header_text = f"ROC CURVES (RAW DATA) - Epoch {roc_selected_epoch}"
+                        else:
+                            header_text = "ROC CURVES (RAW DATA)"
+
                         worksheet.write(0, roc_start_col, header_text, workbook.add_format({'bold': True, 'bg_color': '#D9E1F2'}))
                         worksheet.write(1, roc_start_col, "Class", workbook.add_format({'bold': True}))
                         worksheet.write(1, roc_start_col + 1, "AUC", workbook.add_format({'bold': True}))
+
                         for i, (cls, auc_val, _, _) in enumerate(roc_curves):
                             worksheet.write(2 + i, roc_start_col, cls)
                             worksheet.write(2 + i, roc_start_col + 1, auc_val)
+
                         detail_row_roc = 2 + len(roc_curves) + 2
                         col_offset = 0
                         for cls, auc_val, fpr, tpr in roc_curves:
-                            worksheet.write(detail_row_roc, roc_start_col + col_offset, f"{cls} (AUC={auc_val:.3f})",
-                                            workbook.add_format({'bold': True}))
+                            worksheet.write(detail_row_roc, roc_start_col + col_offset,
+                                            f"{cls} (AUC={auc_val:.3f})", workbook.add_format({'bold': True}))
                             worksheet.write(detail_row_roc + 1, roc_start_col + col_offset, "FPR")
                             worksheet.write(detail_row_roc + 1, roc_start_col + col_offset + 1, "TPR")
+
                             for j, (x, y) in enumerate(zip(fpr, tpr)):
                                 worksheet.write(detail_row_roc + 2 + j, roc_start_col + col_offset, x)
                                 worksheet.write(detail_row_roc + 2 + j, roc_start_col + col_offset + 1, y)
+
                             col_offset += 3
+
                         roc_columns_used = col_offset
                         pr_start_col = roc_start_col + roc_columns_used + 1
 
-                    # Load probabilities for PR
-                    probs_pr, labels_pr, class_names_pr, pr_selected_epoch = self._load_probabilities_for_run(
+                    probs_pr, labels_pr, class_names_pr, pr_selected_epoch = self.load_probabilities_for_run(
                         df, self.pr_epoch, original_run_name
                     )
+
                     if probs_pr is not None:
-                        pr_curves = self._compute_pr(probs_pr, labels_pr, class_names_pr)
-                        header_text = f"PRECISION-RECALL CURVES (RAW DATA) - Epoch {pr_selected_epoch + 1}" if pr_selected_epoch is not None else "PRECISION-RECALL CURVES (RAW DATA)"
+                        pr_curves = self.compute_pr(probs_pr, labels_pr, class_names_pr)
+
+                        if pr_selected_epoch is not None:
+                            header_text = f"PRECISION-RECALL CURVES (RAW DATA) - Epoch {pr_selected_epoch}"
+                        else:
+                            header_text = "PRECISION-RECALL CURVES (RAW DATA)"
+
                         worksheet.write(0, pr_start_col, header_text, workbook.add_format({'bold': True, 'bg_color': '#D9E1F2'}))
                         worksheet.write(1, pr_start_col, "Class", workbook.add_format({'bold': True}))
                         worksheet.write(1, pr_start_col + 1, "AP", workbook.add_format({'bold': True}))
+
                         for i, (cls, ap_val, _, _) in enumerate(pr_curves):
                             worksheet.write(2 + i, pr_start_col, cls)
                             worksheet.write(2 + i, pr_start_col + 1, ap_val)
+
                         detail_row_pr = 2 + len(pr_curves) + 2
                         col_offset = 0
                         for cls, ap_val, recall, precision in pr_curves:
-                            worksheet.write(detail_row_pr, pr_start_col + col_offset, f"{cls} (AP={ap_val:.3f})",
-                                            workbook.add_format({'bold': True}))
+                            worksheet.write(detail_row_pr, pr_start_col + col_offset,
+                                            f"{cls} (AP={ap_val:.3f})", workbook.add_format({'bold': True}))
                             worksheet.write(detail_row_pr + 1, pr_start_col + col_offset, "Recall")
                             worksheet.write(detail_row_pr + 1, pr_start_col + col_offset + 1, "Precision")
+
                             for j, (x, y) in enumerate(zip(recall, precision)):
                                 worksheet.write(detail_row_pr + 2 + j, pr_start_col + col_offset, x)
                                 worksheet.write(detail_row_pr + 2 + j, pr_start_col + col_offset + 1, y)
+
                             col_offset += 3
 
-                # Chart grid
                 metric_cols = [c for c in df.columns if c not in ['epoch', 'Checkpoint']]
                 chart_start_row = len(df) + 2
                 num_columns = 3
@@ -665,83 +972,171 @@ class TensorBoardExporter:
                         metric_pos = df.columns.get_loc(metric_name)
                         num_epochs = len(df)
 
+                        if num_epochs <= 20:
+                            tick_interval = 2
+                        elif num_epochs <= 40:
+                            tick_interval = 5
+                        elif num_epochs <= 80:
+                            tick_interval = 10
+                        else:
+                            tick_interval = 20
+
                         chart = workbook.add_chart({'type': 'line'})
                         chart.add_series({
                             'name': metric_name,
                             'categories': [sheet_name, 1, 0, num_epochs, 0],
                             'values': [sheet_name, 1, metric_pos, num_epochs, metric_pos],
                             'line': {'color': 'black', 'width': 1.5},
-                            'marker': {'type': 'circle', 'size': 4,
-                                       'border': {'color': 'black'},
-                                       'fill': {'color': 'black'}}
+                            'marker': {
+                                'type': 'circle', 'size': 4,
+                                'border': {'color': 'black'},
+                                'fill': {'color': 'black'},
+                            },
                         })
                         chart.set_title({'name': metric_name})
-                        chart.set_x_axis({'name': 'Epoch', 'position_axis': 'on_tick', 'min': 1, 'max': num_epochs})
+                        chart.set_x_axis({
+                            'name': 'Epoch',
+                            'position_axis': 'on_tick',
+                            'min': 1,
+                            'max': num_epochs,
+                            'major_unit': tick_interval,
+                            'num_format': '0',
+                            'label_position': 'low',
+                        })
                         chart.set_legend({'none': True})
                         chart.set_size({'width': chart_width, 'height': chart_height})
                         worksheet.insert_chart(row, col, chart)
+                        print(f"    Metric chart '{metric_name}' placed at row {row}, col {col}")
 
                     elif chart_type == 'roc' and roc_curves is not None and detail_row_roc is not None:
                         roc_chart = workbook.add_chart({'type': 'scatter', 'subtype': 'straight'})
-                        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-                                  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
                         col_offset = 0
+
                         for idx_c, (cls, auc_val, fpr, tpr) in enumerate(roc_curves):
                             data_len = len(fpr)
                             x_range = [sheet_name, detail_row_roc + 2, roc_start_col + col_offset,
                                        detail_row_roc + 2 + data_len - 1, roc_start_col + col_offset]
                             y_range = [sheet_name, detail_row_roc + 2, roc_start_col + col_offset + 1,
                                        detail_row_roc + 2 + data_len - 1, roc_start_col + col_offset + 1]
+
                             roc_chart.add_series({
                                 'name': f"{cls} (AUC={auc_val:.3f})",
                                 'categories': x_range,
                                 'values': y_range,
-                                'line': {'color': colors[idx_c % len(colors)], 'width': 2},
-                                'marker': {'type': 'none'}
+                                'line': {'color': CHART_COLORS[idx_c % len(CHART_COLORS)], 'width': 2},
+                                'marker': {'type': 'none'},
                             })
                             col_offset += 3
 
-                        chart_title = f'ROC Curves (Epoch {roc_selected_epoch + 1})' if roc_selected_epoch is not None else 'ROC Curves'
+                        if roc_selected_epoch is not None:
+                            chart_title = f'ROC Curves (Epoch {roc_selected_epoch})'
+                        else:
+                            chart_title = 'ROC Curves'
+
                         roc_chart.set_title({'name': chart_title})
                         roc_chart.set_x_axis({'name': 'False Positive Rate', 'min': 0, 'max': 1})
                         roc_chart.set_y_axis({'name': 'True Positive Rate', 'min': 0, 'max': 1})
                         roc_chart.set_legend({'position': 'bottom'})
                         roc_chart.set_size({'width': chart_width, 'height': chart_height})
                         worksheet.insert_chart(row, col, roc_chart)
+                        print(f"    ROC chart placed at row {row}, col {col}")
 
                     elif chart_type == 'pr' and pr_curves is not None and detail_row_pr is not None:
                         pr_chart = workbook.add_chart({'type': 'scatter', 'subtype': 'straight'})
                         col_offset = 0
+
                         for idx_c, (cls, ap_val, recall, precision) in enumerate(pr_curves):
                             data_len = len(recall)
                             x_range = [sheet_name, detail_row_pr + 2, pr_start_col + col_offset,
                                        detail_row_pr + 2 + data_len - 1, pr_start_col + col_offset]
                             y_range = [sheet_name, detail_row_pr + 2, pr_start_col + col_offset + 1,
                                        detail_row_pr + 2 + data_len - 1, pr_start_col + col_offset + 1]
+
                             pr_chart.add_series({
                                 'name': f"{cls} (AP={ap_val:.3f})",
                                 'categories': x_range,
                                 'values': y_range,
-                                'line': {'color': colors[idx_c % len(colors)], 'width': 2},
-                                'marker': {'type': 'none'}
+                                'line': {'color': CHART_COLORS[idx_c % len(CHART_COLORS)], 'width': 2},
+                                'marker': {'type': 'none'},
                             })
                             col_offset += 3
 
-                        chart_title = f'Precision-Recall Curves (Epoch {pr_selected_epoch + 1})' if pr_selected_epoch is not None else 'Precision-Recall Curves'
+                        if pr_selected_epoch is not None:
+                            chart_title = f'Precision-Recall Curves (Epoch {pr_selected_epoch})'
+                        else:
+                            chart_title = 'Precision-Recall Curves'
+
                         pr_chart.set_title({'name': chart_title})
                         pr_chart.set_x_axis({'name': 'Recall', 'min': 0, 'max': 1})
                         pr_chart.set_y_axis({'name': 'Precision', 'min': 0, 'max': 1})
                         pr_chart.set_legend({'position': 'bottom'})
                         pr_chart.set_size({'width': chart_width, 'height': chart_height})
                         worksheet.insert_chart(row, col, pr_chart)
+                        print(f"    PR chart placed at row {row}, col {col}")
 
                 worksheet.freeze_panes(1, 0)
 
         print(f"\n✅ Export complete! File saved to: {self.output_file.absolute()}")
 
+    # Warn if the epoch that ROC/PR will be drawn for is not one of the
+    # epochs where a checkpoint was actually saved during training.
+    # This indicates a mismatch between the training-time checkpoint
+    # selection method and the current export setting.
+    # Args:
+    #   run_df (pd.DataFrame): DataFrame with the run metrics
+    #   saved_checkpoints (set): Set of 1-indexed epochs with saved checkpoints
+    # Returns:
+    #   None
+    def _warn_on_checkpoint_epoch_mismatch(
+        self,
+        run_df: pd.DataFrame,
+        saved_checkpoints: set,
+    ) -> None:
 
-    #############################################################################################################
-    # CALL
+        if not saved_checkpoints:
+            return
 
-    def __call__(self) -> None:
-        self.export_with_charts()
+        # Map the export selector to the DataFrame column name
+        if self.roc_epoch == 'balanced_accuracy':
+            column_name = 'Balanced_accuracy'
+            label = 'balanced accuracy'
+        elif self.roc_epoch == 'composite_score':
+            column_name = 'Composite_score'
+            label = 'composite score'
+        else:
+            # 'last' or an explicit int — nothing meaningful to warn about
+            return
+
+        best_epoch = self._get_best_epoch_by_metric(run_df, column_name)
+        if best_epoch is None:
+            return
+
+        if best_epoch not in saved_checkpoints:
+            print(f"    ⚠️  WARNING: ROC/PR epoch {best_epoch} (best {label}) is not "
+                  f"among the saved-checkpoint epochs {sorted(saved_checkpoints)}.")
+            print(f"       This likely means the training-time chckpt_selection_method "
+                  f"differs from the current export setting.")
+            print(f"       ROC/PR curves will still be drawn for epoch {best_epoch}, "
+                  f"but do not correspond to any saved checkpoint.")
+
+    # Resolve the effective ROC/PR epoch selector.
+    # Priority: explicit constructor override > chckpt_selection_method from
+    # settings at the moment of export. 'both' is resolved to 'balanced_accuracy'
+    # (the metric the paper reports).
+    # ROC and PR always share the same selector so their curves come from the
+    # same checkpoint.
+    # Returns:
+    #   str | int: Selector to pass to load_probabilities_for_run
+    def _resolve_selector(self) -> str | int:
+
+        # An override on either roc_epoch or pr_epoch wins for both.
+        if self.roc_epoch_override is not None:
+            return self.roc_epoch_override
+        if self.pr_epoch_override is not None:
+            return self.pr_epoch_override
+
+        selection = setting.get('chckpt_selection_method', 'balanced_accuracy')
+        if selection == 'both':
+            selection = 'balanced_accuracy'
+
+        return selection

@@ -54,10 +54,10 @@ class ExportPlottingMenu:
     # Run the Excel Exporter.
     def _run_excel_exporter(self) -> None:
         print("\n:EXPORT TRAINING METRICS TO EXCEL:")
-        
+
         # Get mode from settings
         mode = setting.get('export_mode', 'auto')
-        
+
         if mode == 'crossval':
             print("  Mode: CROSS-VALIDATION")
             print("  Enter the path to the cross_validation/ folder")
@@ -71,7 +71,7 @@ class ExportPlottingMenu:
             print("  Mode: AUTO (will detect from folder structure)")
             print("  Enter the path to the logs folder (single training)")
             print("  or the cross_validation/ folder (cross-validation)")
-        
+
         print()
 
         confirm = input("Continue? (yes/no): ").strip().lower()
@@ -86,19 +86,19 @@ class ExportPlottingMenu:
                 prompt = "Enter path to logs folder: "
             else:
                 prompt = "Enter path to TensorBoard logs folder: "
-            
+
             logdir = input(prompt).strip()
             if not logdir:
                 print("Cancelled.")
                 return
 
+            # The ROC/PR epoch selector is derived inside TensorBoardExporter
+            # from chckpt_selection_method, so training and export stay in sync.
             exporter = TensorBoardExporter(
                 logdir=logdir,
                 output_file=setting['pth_output'] / "train_metrics.xlsx",
                 prob_dir=None,
-                roc_epoch=setting.get('export_excel_roc_epoch', 'balanced_accuracy'),
-                pr_epoch=setting.get('export_excel_pr_epoch', 'balanced_accuracy'),
-                mode=mode
+                mode=mode,
             )
             exporter.export_with_charts()
         except Exception as e:
