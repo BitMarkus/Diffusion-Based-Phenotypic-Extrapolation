@@ -83,7 +83,7 @@ setting = {
     ##########################
 
     ### PROJECT 1 (CLN7) ###
-    # Define classes
+    # Define classes:
     # 2 classes (WT and KO):
     "classes": ["KO", "WT"],
     # 9 classes (one for each cell line):
@@ -93,9 +93,14 @@ setting = {
     "ko_lines": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075"],
 
     ### PROJECT 2 (MDD) ###
-    # Define classes
-    # 2 classes (WT and MDD):
-    # "classes": ["MDD", "WT"],
+    # Define classes:
+    # Note: For MDD, the two classes are also labelled "WT" and "KO", even
+    # though "MDD" would be the biologically accurate term for the latter.
+    # The generic "KO" label is used because it is hardcoded throughout the
+    # codebase and would require systematic changes across nearly every
+    # script to rename (see the "Scope and Limitations" chapter in the README).
+    # 2 classes (WT and KO):
+    # "classes": ["KO", "WT"],
     # Define cell lines (for dataset generator)
     # "wt_lines": ["WT_BJ", "WT_LF", "WT_MP", "WT_MW", "WT_NH"],
     # "ko_lines": ["MMD_155", "MMD_160", "MMD_169", "MMD_177"],
@@ -221,7 +226,7 @@ setting = {
     # EfficientNet: efficientnet_b0, efficientnet_b3, efficientnet_b4, efficientnet_b7
     # ConvNeXt: convnext_tiny, convnext_small
     # Custom CNN architecture: custom
-    "cnn_type": "resnet50",  # densenet121
+    "cnn_type": "densenet121",  # densenet121
     # Pretrained or initialized weights
     "cnn_is_pretrained": True,
     # Initialization type for non-pretrained cnns
@@ -326,6 +331,25 @@ setting = {
     # False: Composition of original, gradcam and overlay images
     # True: Only export of gradcam image in 512x512 px
     "gradcam_export_only_overlay": True,
+    # Transparency of the GradCAM heatmap when overlaid on the original image.
+    # Range 0.0 (fully transparent, original image fully visible) to
+    # 1.0 (fully opaque, heatmap replaces the image).
+    # Default = 0.4
+    "gradcam_alpha_overlay": 0.4,
+    # Matplotlib colormap used to render the original image in the
+    # three-panel GradCAM output (original / heatmap / overlay).
+    # Only used when gradcam_export_only_overlay is False.
+    # For the grayscale DIC images used here, "gray" is the natural choice.
+    # Any matplotlib colormap name is accepted.
+    # Default = "gray"
+    "gradcam_cmap_orig": "gray",
+    # Matplotlib colormap used to render the GradCAM heatmap itself.
+    # "jet" produces the familiar blue-to-red Grad-CAM visual, where warm
+    # colors indicate regions that contributed most strongly to the
+    # prediction and cool colors indicate regions that did not.
+    # Any matplotlib colormap name is accepted.
+    # Default = "jet"
+    "gradcam_cmap_overlay": "jet",
 
     #######################
     # DIMENSION REDUCTION #
@@ -365,6 +389,12 @@ setting = {
     # t-SNE parameters
     "dimred_tsne_perplexity": 30,
     "dimred_tsne_learning_rate": 'auto',
+    # Maximum number of optimization iterations for t-SNE.
+    # 1000: Faster but less stable embeddings
+    # 2000: Recommended for stable, reproducible results
+    # 5000: Very stable, but significantly slower
+    # Default = 1000
+    "dimred_tsne_max_iter": 2000,
     # TriMAP parameters
     "dimred_trimap_n_inliers": 10,
     "dimred_trimap_n_outliers": 5,

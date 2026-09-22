@@ -88,19 +88,20 @@ class DimRed:
 
         # t-SNE parameters (check scikit-learn version for API compatibility)
         sklearn_version = tuple(map(int, sklearn.__version__.split('.')[:2]))
+        max_iter = setting['dimred_tsne_max_iter']
         if sklearn_version >= (1, 2):
             self.tsne_params = {
                 'perplexity': setting['dimred_tsne_perplexity'],
                 'learning_rate': setting['dimred_tsne_learning_rate'],
                 'random_state': 42,
-                'max_iter': 1000
+                'max_iter': max_iter
             }
         else:
             self.tsne_params = {
                 'perplexity': setting['dimred_tsne_perplexity'],
                 'learning_rate': setting['dimred_tsne_learning_rate'],
                 'random_state': 42,
-                'n_iter': 1000
+                'n_iter': max_iter
             }
 
         # TriMAP parameters

@@ -101,12 +101,7 @@ class AnalysisMenu:
             return
 
         try:
-            # Optional: allow user to specify reference folder
-            ref_folder = input("Enter reference folder name (or press Enter for auto-detect): ").strip()
-            if not ref_folder:
-                ref_folder = None
-
-            fid = FIDCalculator(device, reference_folder=ref_folder)
+            fid = FIDCalculator(device)
             fid()
         except Exception as e:
             print(f"Error during execution: {e}")

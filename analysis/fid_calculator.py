@@ -21,7 +21,6 @@ from torchvision import models, transforms
 from PIL import Image
 # ===== Own Modules =====
 from settings import setting
-from single_training import Dataset
 
 class FIDCalculator:
 
@@ -34,10 +33,9 @@ class FIDCalculator:
     # Args:
     #   device (torch.device): Device to run feature extraction on
     #   reference_folder (str, optional): Name of the reference folder
-    def __init__(self, device: torch.device, reference_folder: str = None) -> None:
+    def __init__(self, device: torch.device) -> None:
 
         self.device = device
-        self.reference_folder = reference_folder
 
         # Settings parameters
         self.pth_input = setting['pth_input'].resolve()
@@ -165,6 +163,10 @@ class FIDCalculator:
             print(f"  - Randomly selected {max_images} out of {len(all_image_paths)} images")
         else:
             selected_paths = all_image_paths
+            if max_images is None:
+                print(f"  - Using all {len(all_image_paths)} images")
+            else:
+                print(f"  - Using all {len(all_image_paths)} images (defines the balancing cap)")
 
         dataset = InceptionDataset(folder_path, num_channels=self.num_channels, image_paths=selected_paths)
         return dataset

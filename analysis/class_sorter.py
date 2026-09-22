@@ -25,7 +25,7 @@ class ClassSorter:
 
     # Initialize the class sorter for high-confidence image selection.
     # Analyzes images using a trained CNN, selects the highest-confidence examples
-    # for each class, and organizes them for LoRA training.
+    # for each class, and organizes them into an output directory.
     # Supports flexible input folder structures and multiple selection modes.
     # Args:
     #   device (torch.device): Device to run predictions on
@@ -536,7 +536,7 @@ class ClassSorter:
 
         self.cnn.eval()
         with torch.no_grad():
-            pbar = tqdm(loader, desc=f"Analyzing images", unit="img")
+            pbar = tqdm(loader, desc="Analyzing batches", unit="batch")
 
             for batch_idx, (images, _) in enumerate(pbar):
                 outputs = self.cnn(images.to(self.device))
@@ -683,7 +683,7 @@ class ClassSorter:
             print(f"Filtering by LOGITS ONLY (no confidence filtering)")
         print(f"{'='*60}")
 
-        for class_name, images in tqdm(class_image_data.items(), desc="Selecting images"):
+        for class_name, images in tqdm(class_image_data.items(), desc="Selecting images per class"):
             if not images:
                 print(f"Warning: No correctly predicted images for class '{class_name}'")
                 selected_images[class_name] = []
@@ -745,7 +745,7 @@ class ClassSorter:
 
         total_copied = 0
 
-        for class_name, images in tqdm(selected_images.items(), desc="Copying images"):
+        for class_name, images in tqdm(selected_images.items(), desc="Copying images per class"):
             if not images:
                 continue
 
@@ -1114,7 +1114,7 @@ class ClassSorter:
         readme_path = self.output_dir / "README.txt"
 
         with open(readme_path, 'w') as f:
-            f.write("High-Confidence Image Selection for LoRA Training\n")
+            f.write("High-Confidence Image Selection\n")
             f.write("=" * 60 + "\n\n")
             f.write(f"Input Directory: {self.pth_input}\n")
             f.write(f"Output Directory: {self.output_dir}\n")
@@ -1316,7 +1316,7 @@ class ClassSorter:
             print(f"Images selected: {total_selected}")
             print(f"Output directory: {self.output_dir}")
             print(f"\nUniversal statistics saved to: {self.output_dir / 'statistics.txt'}")
-            print(f"\nReady for LoRA training with clean, high-confidence examples!")
+            print(f"\nSelection complete.")
 
             return self.output_dir
 

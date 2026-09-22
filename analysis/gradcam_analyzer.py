@@ -41,11 +41,9 @@ class GradCAMAnalyzer:
         self.img_channels = setting['img_channels']
 
         # Visualization parameters
-        self.cmap_orig = setting['captum_cmap_orig']
-        self.cmap_heatmap = setting['captum_cmap_heatmap']
-        self.show_color_bar_orig = setting['captum_show_color_bar_orig']
-        self.output_size = setting['captum_output_size']
-        self.alpha_overlay = setting['captum_alpha_overlay']
+        self.cmap_orig = setting['gradcam_cmap_orig']
+        self.cmap_heatmap = setting['gradcam_cmap_overlay']
+        self.alpha_overlay = setting['gradcam_alpha_overlay']
 
         # Second iteration with blurring
         self.second_iteration = setting['gradcam_second_iteration']
