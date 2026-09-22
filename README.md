@@ -2602,125 +2602,62 @@ The file is typically in the range of **500 KB – 5 MB** per run, depending on 
 
 ---
 
-### 6.2 Plot UMAP / t-SNE / PaCMAP
+### 6.1 Export Training Metrics to Excel
 
-**Description**: Generates publication-ready scatter plots from embedding CSV files produced by the Dimensionality Reduction action (section 3.5). Each CSV file becomes one figure, with points colored by group or class, and all figures share a consistent axes height. The method name is detected automatically from the CSV filename.
+**Description**: Reads TensorBoard event files from a training run and writes all scalar metrics to a multi-sheet Excel workbook. Each training run becomes one Excel sheet containing per-epoch metrics, checkpoint markers, ROC curve data, PR curve data, and embedded charts. This is useful for archival, sharing with collaborators, and offline inspection of training dynamics.
 
-This is the recommended way to produce final UMAP/t-SNE/TriMAP/PaCMAP figures for publication, presentations, or posters.
+**Scope**: This exporter only works with TensorBoard logs produced by this program. The log directory structure, metric naming, and probability file layout follow the conventions established by `train.py` in the Single Training and Cross Validation modules. TensorBoard logs from other sources will not be parsed correctly! This is not a universal TensorBoard exporter.
+
+The exporter supports both **single training** runs (`output/train/[timestamp]/logs/`) and **cross-validation** runs (`output/cross_validation/dataset_XX/logs/`).
 
 #### Key Settings (from `settings.py`)
 
 | Setting | Type | Description | Example Value |
 |---------|------|-------------|---------------|
-| `export_umap_format` | str | Output format: `"png"`, `"tiff"`, `"svg"`, `"pdf"` | `"tiff"` |
-| `export_umap_dpi` | int | Resolution for raster formats | `600` |
-| `export_umap_palette` | str | Any matplotlib colormap name, `"colorblind"`, or `"jet"` | `"jet"` |
-| `export_umap_axes_height` | float | Height of the axes in inches (consistent across all plots) | `5.0` |
-| `export_umap_fixed_aspect` | bool | Preserve data aspect ratio (1:1) | `True` |
-| `export_umap_point_size` | int | Scatter point size in points | `30` |
-| `export_umap_point_alpha` | float | Point transparency (0–1) | `0.5` |
-| `export_umap_show_ellipses` | bool | Draw 95% confidence ellipses around groups | `False` |
-| `export_umap_show_legend` | bool | Show the legend | `True` |
-| `export_umap_legend_position` | str | `"inside"`, `"outside"`, or `"auto"` | `"outside"` |
-| `export_umap_font_family` | str | Font family for all text | `"Arial"` |
-| `export_umap_axis_label_size` | int | Font size for axis labels | `22` |
-| `export_umap_legend_font_size` | int | Font size for legend text | `22` |
-| `export_umap_tick_label_size` | int | Font size for tick labels | `22` |
-| `export_umap_show_grid` | bool | Show background grid | `True` |
-| `export_umap_grid_alpha` | float | Grid transparency | `0.3` |
+| `export_mode` | str | `"auto"`, `"crossval"`, or `"single"`. See "Export Mode" below. | `"auto"` |
+| `chckpt_selection_method` | str | Determines which epoch is used for the ROC and PR curves. See "How the ROC/PR epoch is selected" below. | `"balanced_accuracy"` |
 
-#### Required Folder Structure
+#### Export Mode
+
+The `export_mode` setting controls how the exporter interprets the log directory you point it to. Three modes are supported:
+
+| Mode | Behavior |
+|------|----------|
+| `"auto"` | Detects the mode by inspecting folder names inside the log directory. Folders named `dsXX` (e.g., `ds01`, `ds02`) or `dataset_XX` are treated as cross-validation runs; folders with a timestamp pattern (`YYYYMMDD-HHMMSS`) or direct event files are treated as single training runs. |
+| `"crossval"` | Forces cross-validation mode. Expects `dataset_XX/` or `dsXX/` folders, each containing its own TensorBoard log. One Excel sheet is generated per fold. |
+| `"single"` | Forces single training mode. Expects one training run with a `logs/` folder containing the event file. One Excel sheet is generated. |
+
+**When to override the auto-detection**: In most cases `"auto"` works correctly. Override it explicitly if:
+
+- The log directory contains a mix of cross-validation and single-training folders and you want to focus on one type
+- Your folder names do not match either convention and auto-detection fails
+- You want to force a specific interpretation for reproducibility
+
+#### How the ROC/PR epoch is selected
+
+The epoch used for the ROC and PR curves is derived automatically from `chckpt_selection_method` at the moment the export starts. This keeps the curves in sync with whichever metric was used to pick the best checkpoint during training.
+
+| `chckpt_selection_method` value | Epoch used for ROC and PR curves |
+|---------------------------------|----------------------------------|
+| `"balanced_accuracy"` | Epoch with the highest balanced accuracy |
+| `"composite_score"` | Epoch with the highest composite score |
+| `"both"` | Resolved to `"balanced_accuracy"` (the metric the paper reports) |
+
+**ROC and PR always use the same epoch**, so the two charts are guaranteed to come from the same checkpoint.
+
+The `TensorBoardExporter` class still accepts optional `roc_epoch` / `pr_epoch` constructor arguments for programmatic use. When supplied, these override `chckpt_selection_method` and both curves follow the override. When not supplied — which is the case for the interactive menu — the selector is read from `chckpt_selection_method` at export time.
+
+There are no separate `export_excel_roc_epoch` / `export_excel_pr_epoch` settings. If you want the ROC and PR curves to come from a different epoch than the one chosen by `chckpt_selection_method`, change `chckpt_selection_method` before exporting.
+
+#### Mismatch warning
+
+The exporter prints a warning when the epoch chosen for the ROC and PR curves is **not** one of the epochs where a checkpoint was actually saved during training:
 
 ```plaintext
-input/
-├── umap_groups_ckpt_..._embedding.csv
-├── tsne_groups_ckpt_..._embedding.csv
-└── ...
+⚠️  WARNING: ROC/PR epoch 38 (best composite score) is not among the saved-checkpoint epochs [3, 4, 5, 9, 18, 19, 21].
+   This likely means the training-time chckpt_selection_method differs from the current export setting.
+   ROC/PR curves will still be drawn for epoch 38, but do not correspond to any saved checkpoint.```
 ```
-
-The CSV files are produced by section 3.5 (Dimensionality Reduction). Each file must contain at least:
-
-| Column | Meaning |
-|--------|---------|
-| `dim1` (or a column containing `dim1`) | First embedding coordinate |
-| `dim2` (or a column containing `dim2`) | Second embedding coordinate |
-| `label_name` (or `label_numeric`) | Group or class label |
-
-#### Output
-
-```plaintext
-output/
-├── umap_groups_ckpt_..._embedding.tif
-├── tsne_groups_ckpt_..._embedding.tif
-└── ...
-```
-
-Each input CSV produces one output plot. The output format is controlled by `export_umap_format`.
-
-#### Expected Outcome
-
-The output is a high-resolution figure with:
-
-| Property | Typical Value |
-|----------|---------------|
-| Axes height | 5 inches (consistent across all plots) |
-| Axes width | Adjusted to preserve data aspect ratio |
-| Resolution | 600 DPI (for TIFF/PNG) |
-| Font sizes | 22 pt for axis labels, legend, and tick labels |
-| Point rendering | Rasterized for small file size even in vector formats |
-| Legend | Outside on the right by default |
-
-For datasets with more than 8 groups, the legend is automatically positioned outside to avoid overlap. For colorblind-friendly output, set `export_umap_palette = "colorblind"`.
-
-#### Example Workflow
-
-1. Place one or more embedding CSV files in `input/`
-2. Configure `settings.py`:
-   ```python
-   export_umap_format = "tiff"
-   export_umap_dpi = 600
-   export_umap_palette = "jet"
-   export_umap_axes_height = 5.0
-   export_umap_point_size = 30
-   export_umap_show_legend = True
-   export_umap_legend_position = "outside"
-   export_umap_font_family = "Arial"
-   ```
-3. Run the program and select **6 → 2**:
-   ```plaintext
-   :PLOT UMAP/t-SNE/PaCMAP:
-     Input: input/ (CSV files with embedding coordinates)
-     Output: output/ (publication-ready plots)
-
-   ============================================================
-   DIMENSIONALITY REDUCTION PLOTTER CONFIGURATION
-   ============================================================
-   Input folder:        .../input
-   Output folder:       .../output
-   Output format:       TIFF
-   Resolution:          600 DPI
-   Axes height:         5.0 inches (CONSISTENT across plots)
-   Fixed aspect ratio:  True
-   Point size:          30 points
-   Palette:             jet
-   ============================================================
-
-   Found 4 files to process
-
-   📁 umap_groups_ckpt_..._embedding.csv
-     Loaded 2,400 points
-     Groups: 4
-     Method: UMAP
-     Data ranges: X [-12.34, 15.67] (width=28.01), Y [-10.21, 11.42] (height=21.63)
-     Data aspect ratio (width/height): 1.295
-     Axes size: 6.47 inches wide × 5.00 inches tall
-     Estimated legend width: 1.20 inches
-     Figure size: 8.87 × 6.40 inches
-     ✓ Saved: output/umap_groups_ckpt_..._embedding.tif (2.1 MB)
-   ...
-   ✅ Completed: 4/4 files processed
-   ```
-
 ---
 
 ### 6.3 Plot Confusion Matrix
