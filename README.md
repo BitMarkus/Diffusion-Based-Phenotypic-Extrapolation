@@ -2645,9 +2645,9 @@ The epoch used for the ROC and PR curves is derived automatically from `chckpt_s
 
 **ROC and PR always use the same epoch**, so the two charts are guaranteed to come from the same checkpoint.
 
-The `TensorBoardExporter` class still accepts optional `roc_epoch` / `pr_epoch` constructor arguments for programmatic use. When supplied, these override `chckpt_selection_method` and both curves follow the override. When not supplied — which is the case for the interactive menu — the selector is read from `chckpt_selection_method` at export time.
+The `TensorBoardExporter` class accepts optional `roc_epoch` / `pr_epoch` constructor arguments for programmatic use. When supplied, these override `chckpt_selection_method` and both curves follow the override. When not supplied — which is the case for the interactive menu — the selector is read from `chckpt_selection_method` at export time.
 
-There are no separate `export_excel_roc_epoch` / `export_excel_pr_epoch` settings. If you want the ROC and PR curves to come from a different epoch than the one chosen by `chckpt_selection_method`, change `chckpt_selection_method` before exporting.
+There are no separate `export_excel_roc_epoch` / `export_excel_pr_epoch` settings. To use a different epoch than the one chosen by `chckpt_selection_method`, change `chckpt_selection_method` before exporting.
 
 #### Mismatch warning
 
@@ -2656,8 +2656,107 @@ The exporter prints a warning when the epoch chosen for the ROC and PR curves is
 ```plaintext
 ⚠️  WARNING: ROC/PR epoch 38 (best composite score) is not among the saved-checkpoint epochs [3, 4, 5, 9, 18, 19, 21].
    This likely means the training-time chckpt_selection_method differs from the current export setting.
-   ROC/PR curves will still be drawn for epoch 38, but do not correspond to any saved checkpoint.```
+   ROC/PR curves will still be drawn for epoch 38, but do not correspond to any saved checkpoint.
 ```
+
+This typically happens when the training run was performed with one selection method (e.g. `balanced_accuracy`) but the export is performed with another (e.g. `composite_score`). `train.py` only saves a checkpoint when its own selection criterion is met, so the best-epoch-by-metric-A and the best-epoch-by-metric-B are usually different epochs.
+
+The warning is advisory — the export still completes and the ROC/PR curves are still mathematically valid (every epoch's probability `.npz` is saved, not just the checkpoint epochs). But the curves will not correspond to any checkpoint that exists on disk. For paper figures, set `chckpt_selection_method` to match the value used during training, so no mismatch occurs.
+
+#### Required Input
+
+```plaintext
+logs/
+├── events.out.tfevents.<timestamp>.<hostname>.<id>
+└── probabilities/
+    ├── probabilities_epoch_000.npz
+    ├── probabilities_epoch_000_summary.json
+    └── ...
+```
+
+The events file and probability `.npz` files are both produced automatically by `train.py`. If the probability files are missing, the Excel report will still be generated but the ROC and PR charts will be omitted.
+
+#### Output
+
+```plaintext
+output/
+└── train_metrics.xlsx       # Multi-sheet Excel workbook
+```
+
+Each sheet contains:
+
+```plaintext
+- Scalar table         — per-epoch metrics (loss, accuracy, balanced accuracy,
+                         F1, AUC, AP, learning rate, composite score, class counts)
+- Checkpoint column    — a column marking which epochs produced a saved checkpoint
+                         ('X' in cross-validation mode, 'Saved' in single-training mode)
+- Raw ROC data         — FPR and TPR values per class for the selected epoch
+- Raw PR data          — recall and precision values per class for the selected epoch
+- Embedded charts      — one chart per metric, plus a ROC chart and a PR chart
+```
+
+#### Expected Outcome
+
+For a 40-epoch training run with 2 classes and probability data available:
+
+| Content | Typical Size |
+|---------|-------------|
+| Sheets | 1 (single training) or up to 20 (cross-validation) |
+| Metrics per sheet | 10–15 columns |
+| Epochs per sheet | 40–60 |
+| Embedded charts per sheet | 12–15 (10 metric charts + ROC + PR) |
+
+The file is typically in the range of **500 KB – 5 MB** per run, depending on the number of epochs and metrics.
+
+#### Example Workflow
+
+1. Ensure a trained model exists with logs and probability data in `output/train/[timestamp]/logs/` (single) or `output/cross_validation/dataset_XX/logs/` (cross-validation)
+
+2. Configure `settings.py`:
+
+```python
+export_mode = "auto"
+chckpt_selection_method = "balanced_accuracy"   # also drives the ROC/PR epoch
+```
+
+3. Run the program and select **6 → 1**:
+
+```plaintext
+:EXPORT TRAINING METRICS TO EXCEL:
+  Mode: AUTO (will detect from folder structure)
+
+Enter path to TensorBoard logs folder: output/train/20260910_143022/logs
+
+TensorBoardExporter configuration:
+  Logdir: output/train/20260910_143022/logs
+  Output: output/train_metrics.xlsx
+  Prob dir: output/train/20260910_143022/logs
+  ROC epoch override: None
+  PR epoch override: None
+  Mode: auto
+
+============================================================
+TENSORBOARD EXPORTER – 3-COLUMN CHART GRID
+============================================================
+Logdir: output/train/20260910_143022/logs
+Output: output/train_metrics.xlsx
+Probability dir: output/train/20260910_143022/logs
+ROC/PR epoch selector: balanced_accuracy
+  (resolved from chckpt_selection_method = balanced_accuracy)
+
+✓ Auto-detected: SINGLE TRAINING mode (direct event files)
+
+Extracting scalar metrics from each run...
+  20260910_143022 -> sheet 'training_run'
+    -> 40 epochs, 14 metrics
+    -> Saved checkpoints at epochs: [5, 12, 18, 23, 29, 34]
+
+Writing Excel file...
+--- Run: 20260910_143022 -> sheet 'training_run'
+
+✅ Export complete! File saved to: .../output/train_metrics.xlsx
+```
+
 ---
 
 ### 6.3 Plot Confusion Matrix
