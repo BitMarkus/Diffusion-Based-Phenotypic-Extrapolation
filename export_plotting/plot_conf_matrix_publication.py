@@ -32,15 +32,24 @@ class ConfusionMatrixPlotter:
     #   show_counts (bool): Show raw counts in annotations
     #   combined_mode (bool): Side-by-side raw + normalized
     #   use_fixed_axes_height (bool): Use consistent axes height
-    #   fixed_axes_height (float): Height of matrix in inches
+    #   fixed_axes_height (float): Height of matrix in inches (fixed-height mode)
+    #   figsize (tuple): Manual figure size (manual-size mode)
+    #   left_margin (float): Left margin in inches (fixed-height mode)
+    #   right_margin (float): Right margin in inches (fixed-height mode)
+    #   bottom_margin (float): Bottom margin in inches (fixed-height mode)
+    #   top_margin (float): Top margin in inches (fixed-height mode)
     #   cmap (str): Colormap for heatmap
+    #   vmin (float | None): Lower color scale bound (None = auto)
+    #   vmax (float | None): Upper color scale bound (None = auto)
     #   show_title (bool): Show/hide title
     #   show_axis_labels (bool): Show/hide axis labels
     #   show_colorbar (bool): Show/hide colorbar
+    #   cbar_label (str | None): Colorbar label override (None = auto)
+    #   colorbar_pad (float): Padding between matrix and colorbar
     #   show_per_class_accuracy (bool): Show accuracy on y-axis labels
     #   show_overall_accuracy (bool): Show overall accuracy in title
     #   font_family (str): Font family
-    #   master_font_size (int): Master font size (overrides all below)
+    #   master_font_size (int | None): Master font size (overrides individual sizes)
     #   axis_label_size (int): Axis label font size (points)
     #   title_font_size (int): Title font size (points)
     #   tick_label_size (int): Tick label font size (points)
@@ -60,10 +69,19 @@ class ConfusionMatrixPlotter:
         combined_mode=False,
         use_fixed_axes_height=True,
         fixed_axes_height=6.0,
+        figsize=(12, 10),
+        left_margin=0.8,
+        right_margin=0.3,
+        bottom_margin=0.6,
+        top_margin=0.3,
         cmap='Blues',
+        vmin=None,
+        vmax=None,
         show_title=True,
         show_axis_labels=True,
         show_colorbar=True,
+        cbar_label=None,
+        colorbar_pad=0.05,
         show_per_class_accuracy=False,
         show_overall_accuracy=True,
         font_family='Arial',
@@ -90,24 +108,40 @@ class ConfusionMatrixPlotter:
         self.output_format = output_format.lower()
         self.raster_dpi = raster_dpi
 
-        # Matrix settings
+        # Matrix content settings
         self.normalize = normalize
         self.show_counts = show_counts
         self.combined_mode = combined_mode
+        self.annotation_decimal_places = annotation_decimal_places
 
         # Size settings
         self.use_fixed_axes_height = use_fixed_axes_height
         self.fixed_axes_height = fixed_axes_height
+        self.figsize = figsize
+        self.left_margin = left_margin
+        self.right_margin = right_margin
+        self.bottom_margin = bottom_margin
+        self.top_margin = top_margin
 
-        # Figure settings
+        # Color settings
         self.cmap = cmap
+        self.vmin = vmin
+        self.vmax = vmax
+
+        # Colorbar settings
+        self.show_colorbar = show_colorbar
+        self.cbar_label = cbar_label
+        self.colorbar_pad = colorbar_pad
 
         # Text visibility settings
         self.show_title = show_title
         self.show_axis_labels = show_axis_labels
-        self.show_colorbar = show_colorbar
         self.show_per_class_accuracy = show_per_class_accuracy
         self.show_overall_accuracy = show_overall_accuracy
+
+        # Tick settings
+        self.xtick_rotation = xtick_rotation
+        self.ytick_rotation = ytick_rotation
 
         # Font settings
         self.font_family = font_family
@@ -125,13 +159,6 @@ class ConfusionMatrixPlotter:
             self.tick_label_size = tick_label_size
             self.annotation_font_size = annotation_font_size
             self.legend_font_size = legend_font_size
-
-        # Tick settings
-        self.xtick_rotation = xtick_rotation
-        self.ytick_rotation = ytick_rotation
-
-        # Annotation settings
-        self.annotation_decimal_places = annotation_decimal_places
 
         # Validate settings
         self._validate_settings()
@@ -193,14 +220,25 @@ class ConfusionMatrixPlotter:
         print(f"Normalization:       {self.normalize}")
         print(f"Show counts:         {self.show_counts}")
         print(f"Combined mode:       {self.combined_mode}")
-        print(f"Matrix height:       {self.fixed_axes_height} inches (fixed)")
+
+        # Size mode
+        if self.use_fixed_axes_height:
+            print(f"Size mode:           Fixed axes height = {self.fixed_axes_height} inches")
+            print(f"Margins (in):        left={self.left_margin}, right={self.right_margin}, "
+                  f"bottom={self.bottom_margin}, top={self.top_margin}")
+        else:
+            print(f"Size mode:           Manual figsize = {self.figsize[0]} × {self.figsize[1]} inches")
+
+        # Fonts
         if self.master_font_size is not None:
             print(f"Font sizes:          MASTER CONTROL = {self.master_font_size} points (all fonts)")
         else:
             print(f"Font sizes (points): axis={self.axis_label_size}, "
                   f"title={self.title_font_size}, ticks={self.tick_label_size}, "
                   f"annotations={self.annotation_font_size}, legend={self.legend_font_size}")
+
         print(f"X-tick rotation:     {self.xtick_rotation}°")
+        print(f"Y-tick rotation:     {self.ytick_rotation}°")
         print("=" * 60)
 
     # Load confusion matrix data from JSON file.
@@ -213,6 +251,7 @@ class ConfusionMatrixPlotter:
         class_acc = data.get('class_accuracy', {})
         overall_acc = data.get('overall_accuracy', None)
 
+        # Calculate if missing
         if not class_acc:
             class_acc = {}
             for i, cls in enumerate(classes):
@@ -233,16 +272,16 @@ class ConfusionMatrixPlotter:
             row_sums = cm.sum(axis=1, keepdims=True)
             data = np.where(row_sums > 0, cm / row_sums, 0)
             fmt = '.3f'
-            cbar_label = 'Recall'
+            cbar_label = self.cbar_label if self.cbar_label else 'Recall'
         elif self.normalize == 'columns':
             col_sums = cm.sum(axis=0, keepdims=True)
             data = np.where(col_sums > 0, cm / col_sums, 0)
             fmt = '.3f'
-            cbar_label = 'Precision'
+            cbar_label = self.cbar_label if self.cbar_label else 'Precision'
         else:
             data = cm
             fmt = 'd'
-            cbar_label = 'Count'
+            cbar_label = self.cbar_label if self.cbar_label else 'Count'
 
         return data, fmt, cbar_label
 
@@ -253,6 +292,7 @@ class ConfusionMatrixPlotter:
         else:
             format_str = f'{{:.{self.annotation_decimal_places}f}}'
             formatted = format_str.format(value)
+            # Remove trailing zeros after decimal point if they exist
             if '.' in formatted:
                 formatted = formatted.rstrip('0').rstrip('.')
             return formatted
@@ -298,7 +338,7 @@ class ConfusionMatrixPlotter:
 
         return original_title if original_title else 'Confusion Matrix'
 
-    # Calculate figure size based on settings.
+    # Calculate figure size based on selected size mode.
     def _calculate_figure_size(self, n_classes: int):
         if self.use_fixed_axes_height:
             axes_size = self.fixed_axes_height
@@ -312,46 +352,69 @@ class ConfusionMatrixPlotter:
     def _plot_single(self, cm, classes, class_acc, overall_acc, output_path, title=None):
         self._overall_acc = overall_acc
 
+        # Prepare data
         data, fmt, cbar_label = self._normalize_matrix(cm)
         annot = self._create_annotation(cm, data, fmt)
         class_labels = self._get_class_labels(classes, class_acc)
 
+        # Set vmin/vmax
+        vmin = self.vmin if self.vmin is not None else 0
+        if self.vmax is None:
+            if self.normalize in ['rows', 'columns']:
+                vmax = 1.0
+            else:
+                vmax = np.max(data)
+        else:
+            vmax = self.vmax
+
+        # Calculate figure size
         fig_width, fig_height, axes_width, axes_height = self._calculate_figure_size(len(classes))
 
-        fig = plt.figure(figsize=(fig_width, fig_height))
-        left_pos = self.left_margin / fig_width
-        bottom_pos = self.bottom_margin / fig_height
-        width_pos = axes_width / fig_width
-        height_pos = axes_height / fig_height
-        ax = fig.add_axes([left_pos, bottom_pos, width_pos, height_pos])
+        # Create figure
+        if self.use_fixed_axes_height:
+            fig = plt.figure(figsize=(fig_width, fig_height))
+            left_pos = self.left_margin / fig_width
+            bottom_pos = self.bottom_margin / fig_height
+            width_pos = axes_width / fig_width
+            height_pos = axes_height / fig_height
+            ax = fig.add_axes([left_pos, bottom_pos, width_pos, height_pos])
+        else:
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
-        im = ax.imshow(data, cmap=self.cmap, aspect='auto')
+        # Create heatmap
+        im = ax.imshow(data, cmap=self.cmap, vmin=vmin, vmax=vmax, aspect='auto')
 
+        # Add annotations
         for i in range(data.shape[0]):
             for j in range(data.shape[1]):
                 text = annot[i, j]
-                color = 'white' if data[i, j] > 0.5 else 'black'
+                color = 'white' if data[i, j] > (vmax - vmin) / 2 else 'black'
                 ax.text(j, i, text, ha='center', va='center',
-                       fontsize=self.annotation_font_size, color=color)
+                        fontsize=self.annotation_font_size, color=color)
 
+        # Set ticks and labels with rotation
         ax.set_xticks(np.arange(len(classes)))
         ax.set_yticks(np.arange(len(classes)))
         ax.set_xticklabels(classes, rotation=self.xtick_rotation, ha='right')
         ax.set_yticklabels(class_labels, rotation=self.ytick_rotation)
 
+        # Add colorbar
         if self.show_colorbar:
-            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.05)
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=self.colorbar_pad)
             cbar.set_label(cbar_label, fontsize=self.legend_font_size)
             cbar.ax.tick_params(labelsize=self.tick_label_size)
 
+        # Set axis labels
         if self.show_axis_labels:
             ax.set_xlabel('Predicted Class')
             ax.set_ylabel('True Class')
 
+        # Set title
         plot_title = self._get_title(title)
         if plot_title:
             ax.set_title(plot_title, fontweight='bold')
 
+        # Save
         self._save_figure(fig, output_path)
         plt.close()
 
@@ -362,10 +425,15 @@ class ConfusionMatrixPlotter:
     def _plot_combined(self, cm, classes, class_acc, overall_acc, output_path):
         self._overall_acc = overall_acc
 
-        axes_size = self.fixed_axes_height
-        single_width = self.left_margin + axes_size + self.right_margin
-        fig_width = single_width * 2 + 0.5
-        fig_height = self.bottom_margin + axes_size + self.top_margin
+        # Calculate figure size
+        if self.use_fixed_axes_height:
+            axes_size = self.fixed_axes_height
+            single_width = self.left_margin + axes_size + self.right_margin
+            fig_width = single_width * 2 + 0.5
+            fig_height = self.bottom_margin + axes_size + self.top_margin
+        else:
+            fig_width = self.figsize[0] * 2
+            fig_height = self.figsize[1]
 
         fig, axes = plt.subplots(1, 2, figsize=(fig_width, fig_height))
 
@@ -380,7 +448,7 @@ class ConfusionMatrixPlotter:
             for j in range(data_raw.shape[1]):
                 color = 'white' if data_raw[i, j] > vmax_raw / 2 else 'black'
                 axes[0].text(j, i, str(int(data_raw[i, j])), ha='center', va='center',
-                           fontsize=self.annotation_font_size, color=color)
+                             fontsize=self.annotation_font_size, color=color)
 
         axes[0].set_xticks(np.arange(len(classes)))
         axes[0].set_yticks(np.arange(len(classes)))
@@ -393,7 +461,7 @@ class ConfusionMatrixPlotter:
         axes[0].set_title('Raw Counts', fontweight='bold')
 
         if self.show_colorbar:
-            cbar1 = plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=0.05)
+            cbar1 = plt.colorbar(im1, ax=axes[0], fraction=0.046, pad=self.colorbar_pad)
             cbar1.set_label('Count', fontsize=self.legend_font_size)
             cbar1.ax.tick_params(labelsize=self.tick_label_size)
 
@@ -407,7 +475,7 @@ class ConfusionMatrixPlotter:
             for j in range(data_norm.shape[1]):
                 color = 'white' if data_norm[i, j] > 0.5 else 'black'
                 axes[1].text(j, i, annot_norm[i, j], ha='center', va='center',
-                           fontsize=self.annotation_font_size, color=color)
+                             fontsize=self.annotation_font_size, color=color)
 
         axes[1].set_xticks(np.arange(len(classes)))
         axes[1].set_yticks(np.arange(len(classes)))
@@ -423,7 +491,7 @@ class ConfusionMatrixPlotter:
             axes[1].set_title(plot_title, fontweight='bold')
 
         if self.show_colorbar:
-            cbar2 = plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=0.05)
+            cbar2 = plt.colorbar(im2, ax=axes[1], fraction=0.046, pad=self.colorbar_pad)
             cbar2.set_label(cbar_label, fontsize=self.legend_font_size)
             cbar2.ax.tick_params(labelsize=self.tick_label_size)
 

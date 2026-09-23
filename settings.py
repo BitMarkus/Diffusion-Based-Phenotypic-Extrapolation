@@ -517,9 +517,10 @@ setting = {
     # 'single': Forces single training mode (expects timestamp folders)
     "export_mode": "auto",
 
-    ### UMAP/t-SNE/PaCMAP Plotter (plot_umap_publication.py) ###
+### UMAP/t-SNE/PaCMAP Plotter (plot_umap_publication.py) ###
     # Creates publication-ready plots from embedding CSV files
 
+    # ===== OUTPUT FORMAT =====
     # Output format: 'png', 'tiff', 'svg', 'pdf'
     # 'tiff': Recommended for print publications (600 DPI)
     # 'png': Good for presentations, smaller file size
@@ -530,6 +531,7 @@ setting = {
     # 600: Recommended for print publications (Nature, Science, Cell)
     # 1200: Extreme quality (very large files)
     "export_umap_dpi": 600,
+    # ===== POINTS =====
     # Size of each point in the scatter plot (points = 1/72 inch)
     # 1-5: Very small, good for massive datasets (>50k points)
     # 10-20: Small, good for large datasets (10k-50k points)
@@ -543,6 +545,7 @@ setting = {
     # 0.5-0.8: Good for medium datasets
     # 0.9-1.0: Only for small datasets (<500 points)
     "export_umap_point_alpha": 0.5,
+    # ===== GROUP APPEARANCE =====
     # Show 95% confidence ellipses around each group
     # True: Adds ellipses showing group distribution (good for presentations)
     # False: Cleaner look (recommended for publications with many groups)
@@ -556,6 +559,7 @@ setting = {
     # 'tab20': 20 distinct colors (good for up to 20 groups)
     # Any valid matplotlib colormap name
     "export_umap_palette": "jet",
+    # ===== FIGURE SIZE =====
     # Preserve data aspect ratio (True = 1:1, False = stretch to fit)
     # True: Maintains the true shape of the embedding (recommended)
     # False: Stretches to fill axes (can distort distances)
@@ -566,6 +570,20 @@ setting = {
     # 8-10: Good for posters
     # Larger values = more detail, larger files
     "export_umap_axes_height": 5.0,
+    # Margins around the axes in inches
+    # Control spacing between axes and figure edges
+    "export_umap_left_margin": 1.2,         # Space for y-axis label and tick labels
+    "export_umap_right_margin": 1.0,        # Space on right side of axes
+    "export_umap_bottom_margin": 0.9,       # Space for x-axis label and tick labels
+    "export_umap_top_margin": 0.5,          # Space above axes
+    # Minimum width reserved for an outside legend, in inches
+    # The plotter estimates the required width from the longest group name;
+    # this value is used as a lower bound, so you can force extra space if
+    # labels are cut off. Increase if legend text is truncated.
+    # 2.0-3.0: Typical value
+    # 4.0-5.0: Long group names
+    "export_umap_legend_margin_extra": 3.0,
+    # ===== LEGEND =====
     # Show/hide legend
     # True: Shows legend with group names
     # False: Hides legend (useful if groups are labeled in the plot)
@@ -580,6 +598,7 @@ setting = {
     # 80-120: Medium legend markers (recommended)
     # 150-200: Large legend markers
     "export_umap_legend_marker_size": 100,
+    # ===== FONTS =====
     # Font family for all text
     # 'Arial': Standard sans-serif (recommended for publications)
     # 'Helvetica': Similar to Arial
@@ -597,6 +616,7 @@ setting = {
     # Font size for tick labels (axis numbers) (points)
     # Same recommendations as axis_label_size
     "export_umap_tick_label_size": 22,
+    # ===== GRID =====
     # Show background grid
     # True: Adds grid lines (helps readability)
     # False: Clean background (minimalist)
@@ -605,24 +625,18 @@ setting = {
     # 0.2-0.4: Subtle grid (recommended)
     # 0.5-0.8: More visible grid
     "export_umap_grid_alpha": 0.3,
-    # Margins around the axes in inches
-    # Control spacing between axes and figure edges
-    "export_umap_left_margin": 1.2,         # Space for y-axis label and tick labels
-    "export_umap_right_margin": 1.0,        # Space on right side of axes
-    "export_umap_bottom_margin": 0.9,       # Space for x-axis label and tick labels
-    "export_umap_top_margin": 0.5,          # Space above axes
-    "export_umap_legend_margin_extra": 3.0, # Extra space for outside legend (right side)
-
-
-    ### Confusion Matrix Plotter (plot_conf_matrix_publication.py) ###
+    
+### Confusion Matrix Plotter (plot_conf_matrix_publication.py) ###
     # Creates publication-ready confusion matrix plots from JSON files
 
+    # ===== OUTPUT FORMAT =====
     # Output format: 'png', 'tiff', 'svg', 'pdf'
     "export_cm_format": "tiff",
     # Resolution for raster formats (PNG, TIFF)
     # 300: Minimum for presentations
     # 600: Recommended for print publications
     "export_cm_dpi": 600,
+    # ===== MATRIX CONTENT =====
     # Normalization mode for the confusion matrix
     # 'rows': Row-normalized (shows recall/TPR per class)
     #        Each row sums to 1. Good for showing per-class accuracy.
@@ -640,15 +654,41 @@ setting = {
     # True: Two matrices side by side (raw and normalized)
     # False: Single matrix (normalized as selected)
     "export_cm_combined": False,
-    # Use fixed axes height for all plots
-    # True: All plots have identical axes height (recommended for consistency)
-    # False: Uses manual figsize
-    "export_cm_use_fixed_height": True,
-    # Height of the axes in inches (when use_fixed_height = True)
+    # Number of decimal places for annotation values
+    # 3: Shows 3 decimal places (e.g., 0.123)
+    # 2: Shows 2 decimal places (e.g., 0.12)
+    # 1: Shows 1 decimal place (e.g., 0.1)
+    "export_cm_annotation_decimal_places": 3,
+    # ===== FIGURE SIZE =====
+    # Choose ONE of two size modes:
+    #
+    #   Mode 1 (recommended): export_cm_use_fixed_height = True
+    #     The size is derived from export_cm_fixed_height (matrix height)
+    #     plus the four margin settings. export_cm_figsize is IGNORED.
+    #
+    #   Mode 2: export_cm_use_fixed_height = False
+    #     The size is taken directly from export_cm_figsize.
+    #     export_cm_fixed_height and the four margins are IGNORED.
+    #
+    # The two modes are mutually exclusive. Set the switch, then only
+    # configure the settings for the mode you chose.
+    "export_cm_use_fixed_height": False,
+    # Height of the matrix rectangle in inches (only used in Mode 1)
+    # The figure height is fixed_height + top_margin + bottom_margin.
     # 4-6: Good for small matrices (<10 classes)
     # 6-8: Good for medium matrices (10-20 classes)
     # 8-12: Good for large matrices (>20 classes)
     "export_cm_fixed_height": 6.0,
+    # Manual figure size in inches (width, height) (only used in Mode 2)
+    "export_cm_figsize": (12, 10),
+    # Margins around the matrix in inches (only used in Mode 1)
+    # These define the space outside the matrix rectangle for labels, ticks,
+    # and title. Increase if axis labels or titles get cut off.
+    "export_cm_left_margin": 0.8,              # Space for y-axis label and tick labels
+    "export_cm_right_margin": 0.3,             # Space on right side of matrix
+    "export_cm_bottom_margin": 0.6,            # Space for x-axis label and tick labels
+    "export_cm_top_margin": 0.3,               # Space above matrix (for title)
+    # ===== COLOR SCALE =====
     # Colormap for the heatmap
     # 'Blues': Classic blue gradient (recommended)
     # 'Reds': Red gradient
@@ -657,6 +697,28 @@ setting = {
     # 'plasma': Modern perceptually uniform
     # Any valid matplotlib colormap name
     "export_cm_cmap": "Blues",
+    # Color scale bounds
+    # None: Auto-calculated
+    #       For normalized matrices (rows/columns): vmin=0, vmax=1
+    #       For raw counts: vmin=0, vmax=max value in matrix
+    # Numbers: Fixed bounds (e.g., 0.0 and 1.0 to force normalized scale)
+    "export_cm_vmin": None,
+    "export_cm_vmax": None,
+    # ===== COLORBAR =====
+    # Show/hide colorbar
+    # True: Shows colorbar indicating value scale
+    # False: No colorbar (cleaner)
+    "export_cm_show_colorbar": True,
+    # Colorbar label (text next to the color scale)
+    # None: Auto-set based on normalization mode
+    #       'rows' -> "Recall", 'columns' -> "Precision", 'none' -> "Count"
+    # String: Custom label (e.g., "Accuracy", "Proportion")
+    "export_cm_cbar_label": None,
+    # Padding between matrix and colorbar (fraction of axes width)
+    # 0.05: Recommended default
+    # 0.08-0.10: More space (if labels are close to the matrix)
+    "export_cm_colorbar_pad": 0.05,
+    # ===== TEXT AND LABELS =====
     # Show/hide plot title
     # True: Shows title with overall accuracy
     # False: No title (cleaner)
@@ -665,10 +727,6 @@ setting = {
     # True: Shows "Predicted Class" and "True Class"
     # False: No axis labels (cleaner)
     "export_cm_show_axis_labels": True,
-    # Show/hide colorbar
-    # True: Shows colorbar indicating value scale
-    # False: No colorbar (cleaner)
-    "export_cm_show_colorbar": True,
     # Show per-class accuracy on y-axis labels
     # Example: "KO_1096-01\n(93.1%)" shows class name with accuracy
     # True: Shows accuracy in labels (informative)
@@ -679,6 +737,13 @@ setting = {
     # True: Shows overall accuracy in title
     # False: Title only shows matrix name
     "export_cm_show_overall_acc": True,
+    # Rotation of tick labels (degrees)
+    # 45: Good for long class names (recommended)
+    # 90: Vertical (good for many classes)
+    # 0: Horizontal (only for short names)
+    "export_cm_xtick_rotation": 45,            # Rotation of x-axis labels (predicted classes)
+    "export_cm_ytick_rotation": 0,             # Rotation of y-axis labels (true classes)
+    # ===== FONTS =====
     # Font family for all text
     # 'Arial': Recommended for publications
     # 'Times New Roman': Serif font
@@ -695,31 +760,18 @@ setting = {
     "export_cm_tick_label_size": 25,           # Size for tick labels (class names)
     "export_cm_annotation_font_size": 16,      # Size for numbers inside matrix cells
     "export_cm_legend_font_size": 30,          # Size for colorbar label
-    # Rotation of tick labels (degrees)
-    # 45: Good for long class names (recommended)
-    # 90: Vertical (good for many classes)
-    # 0: Horizontal (only for short names)
-    "export_cm_xtick_rotation": 45,            # Rotation of x-axis labels (predicted classes)
-    "export_cm_ytick_rotation": 0,             # Rotation of y-axis labels (true classes)
-    # Number of decimal places for annotation values
-    # 3: Shows 3 decimal places (e.g., 0.123)
-    # 2: Shows 2 decimal places (e.g., 0.12)
-    # 1: Shows 1 decimal place (e.g., 0.1)
-    "export_cm_annotation_decimal_places": 3,
 
-
-    ### Training Metrics Plotter (plot_train_metrics_publication.py) ###
+### Training Metrics Plotter (plot_train_metrics_publication.py) ###
     # Creates publication-ready plots from TensorBoard logs
 
+    # ===== OUTPUT FORMAT =====
     # Output format: 'png', 'tiff', 'svg', 'pdf'
     "export_train_format": "tiff",
     # Resolution for raster formats (PNG, TIFF)
     # 300: Good for presentations
     # 600: Recommended for print publications
     "export_train_dpi": 300,
-    # Which epoch to use for ROC curves (same options as excel exporter)
-    "export_train_roc_epoch": "balanced_accuracy",
-    "export_train_pr_epoch": "balanced_accuracy",
+    # ===== FIGURE SIZE =====
     # Use fixed axes height for all plots
     # True: All plots have identical axes height (recommended for consistency)
     # False: Different plots may have different heights
@@ -728,11 +780,7 @@ setting = {
     # 4-6: Good for publications
     # 6-8: Good for presentations
     "export_train_fixed_height": 5.0,
-    # Master font size for all text
-    # 10-14: Good for publications
-    # 16-22: Good for presentations
-    # 24-36: Good for posters
-    "export_train_master_font_size": 22,
+    # ===== CURVE STYLE =====
     # Line width for plot lines (points)
     # 1.0-1.5: Thin lines (good for publications with many lines)
     # 2.0-2.5: Medium lines (recommended)
@@ -759,26 +807,36 @@ setting = {
     # 0.9: Strong smoothing (hides noise, may hide patterns)
     # 0.95: Very strong smoothing
     "export_train_smoothing": 0.0,
+    # ===== ROC / PR EPOCH SELECTION =====
+    # Which epoch to use for ROC curves (same options as excel exporter)
+    "export_train_roc_epoch": "balanced_accuracy",
+    "export_train_pr_epoch": "balanced_accuracy",
+    # ===== FONTS =====
     # Font family for all text
     "export_train_font_family": "Arial",
-    # Individual font sizes (when master_font_size is None)
+    # Master font size for all text (overrides individual sizes below)
+    # None: Use individual sizes below
+    # 10-14: Good for publications
+    # 16-22: Good for presentations
+    # 24-36: Good for posters
+    "export_train_master_font_size": 22,
+    # Individual font sizes (only used when master_font_size is None)
     "export_train_axis_label_size": 12,        # Size for axis labels
     "export_train_title_font_size": 14,        # Size for plot titles
     "export_train_tick_label_size": 10,        # Size for tick labels
     "export_train_legend_font_size": 10,       # Size for legend text
-    # Show/hide legend
-    "export_train_show_legend": True,
-    # Grid settings
+    # ===== GRID =====
     "export_train_show_grid": True,
     "export_train_grid_alpha": 0.3,            # Grid transparency (0.0-1.0)
     "export_train_grid_linestyle": "--",       # Grid line style: '-', '--', ':', '-.'
     "export_train_grid_color": "gray",         # Grid line color
+    # ===== THRESHOLD LINES =====
     # Minimum class accuracy threshold (shown as red dashed line)
     # 0.60: 60% threshold (typical minimum acceptable accuracy)
     # 0.65: 65% threshold
     # None: No threshold line shown
     "export_train_min_class_acc_threshold": 0.65,
-    #Plot Selection Flags
+    # ===== PLOT SELECTION =====
     # Set to True to generate, False to skip
     "export_train_plot_loss": True,                 # Training/validation loss curves
     "export_train_plot_accuracy": True,             # Training/validation accuracy (weighted + standard)
@@ -796,15 +854,15 @@ setting = {
     "export_train_plot_gpu_memory": False,          # GPU memory usage over training
     "export_train_plot_roc": True,                  # ROC curves (requires .npz files)
     "export_train_plot_pr": True,                   # Precision-Recall curves (requires .npz files)
-    #Legend Outside Settings
+    # ===== LEGEND - OUTSIDE PLACEMENT =====
     # Place legend outside the plot (right side)
     # True: Legend placed to the right of the plot (recommended for many classes)
     # False: Legend placed inside the plot
     "export_train_per_class_legend_outside": True,  # Per-class accuracy legend outside
     "export_train_roc_legend_outside": True,        # ROC curves legend outside
     "export_train_pr_legend_outside": True,         # PR curves legend outside
-    # Legend Position Settings (Inside)
-    # Each plot type can have its own legend position
+    # ===== LEGEND - POSITIONS =====
+    # Each plot type can have its own legend position (used only when not placed outside)
     # Options: 'best', 'upper right', 'upper left', 'lower left', 'lower right', 'upper center', etc.
     "export_train_loss_legend_loc": "upper right",
     "export_train_accuracy_legend_loc": "lower right",

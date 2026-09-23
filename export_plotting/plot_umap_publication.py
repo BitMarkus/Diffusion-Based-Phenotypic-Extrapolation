@@ -322,9 +322,10 @@ class UMAPPlotter:
         if has_outside_legend:
             n_groups = len(df['label_name'].unique())
             max_label_length = max([len(str(label)) for label in df['label_name'].unique()])
-            legend_width = 0.6 + (max_label_length * 0.08)
-            legend_width = max(legend_width, 0.8)
-            print(f"  Estimated legend width: {legend_width:.2f} inches")
+            estimated_width = 0.6 + (max_label_length * 0.08)
+            legend_width = max(estimated_width, self.legend_margin_extra)
+            print(f"  Legend width: {legend_width:.2f} inches "
+                  f"(estimated {estimated_width:.2f}, minimum {self.legend_margin_extra})")
 
         extra_right = legend_width if has_outside_legend else 0
 
