@@ -2,6 +2,8 @@
 # Copyright (C) 2026 Markus Reichold <markus.reichold@ur.de>
 # SPDX-License-Identifier: MIT
 
+# ===== Standard Library Imports =====
+from pathlib import Path
 # ===== Own Modules =====
 import functions as fn
 from settings import setting
@@ -65,12 +67,18 @@ class ExportPlottingMenu:
             print("  Example: output/cross_validation/")
         elif mode == 'single':
             print("  Mode: SINGLE TRAINING")
-            print("  Enter the path to the logs/ folder")
-            print("  Example: output/train/20260909-143022/logs/")
+            print("  Enter the path to the training output folder")
+            print("  Supported structures:")
+            print("    - output/train/                    (contains timestamp folders)")
+            print("    - output/train/<timestamp>/        (contains 'logs/' subfolder)")
+            print("    - output/train/<timestamp>/logs/   (contains event files)")
+            print("    - output/<run>/logs/<timestamp>/   (old structure)")
         else:
             print("  Mode: AUTO (will detect from folder structure)")
-            print("  Enter the path to the logs folder (single training)")
+            print("  Enter the path to the training output folder (single training)")
             print("  or the cross_validation/ folder (cross-validation)")
+            print("  Example (single): output/train/")
+            print("  Example (crossval): output/cross_validation/")
 
         print()
 
@@ -79,26 +87,127 @@ class ExportPlottingMenu:
             print("Operation cancelled.")
             return
 
-        try:
-            if mode == 'crossval':
-                prompt = "Enter path to cross_validation folder: "
-            elif mode == 'single':
-                prompt = "Enter path to logs folder: "
+        if mode == 'crossval':
+            prompt = "Enter path to cross_validation folder: "
+        elif mode == 'single':
+            prompt = "Enter path to training output folder: "
+        else:
+            prompt = "Enter path to TensorBoard logs folder: "
+
+        logdir = input(prompt).strip()
+        if not logdir:
+            print("Cancelled.")
+            return
+
+        # Detect the logdir and probability folder
+        logdir_path = Path(logdir)
+        prob_dir = None
+        run_folder_name = None
+        effective_logdir = logdir  # What we pass to the exporter (may differ from user input)
+
+        # ---------------------------------------------------------------
+        # Case A: New structure
+        #   <run>/logs/<timestamp>/events.out.tfevents.*
+        #   <run>/logs/<timestamp>/probabilities/
+        # User may enter: <parent>, <parent>/<timestamp>, or <parent>/<timestamp>/logs
+        # ---------------------------------------------------------------
+
+        # A1: user entered the logs/ folder directly
+        candidate = logdir_path / "probabilities"
+        if candidate.exists():
+            prob_dir = candidate
+            run_folder_name = logdir_path.parent.name
+
+        # A2: user entered a run folder containing logs/
+        if prob_dir is None:
+            candidate = logdir_path / "logs" / "probabilities"
+            if candidate.exists():
+                prob_dir = candidate
+                run_folder_name = logdir_path.name
+
+        # A3: user entered a parent folder containing run folders
+        if prob_dir is None:
+            candidates = sorted(logdir_path.glob("*/logs/probabilities"))
+            if candidates:
+                prob_dir = candidates[0].parent.parent
+                run_folder_name = prob_dir.name
+
+        # ---------------------------------------------------------------
+        # Case B: Old structure
+        #   <parent>/logs/<timestamp>/events.out.tfevents.*
+        #   <parent>/logs/<timestamp>/probabilities/
+        # User may enter: <parent>, <parent>/logs, or <parent>/logs/<timestamp>
+        # ---------------------------------------------------------------
+
+        # B1: user entered the <parent>/logs/<timestamp>/ folder directly
+        # (also covers A1 when the timestamp folder contains probabilities/ directly,
+        #  but the check above already handles it — this is only reached if A1 failed)
+        if prob_dir is None:
+            candidate = logdir_path / "probabilities"
+            if candidate.exists() and logdir_path.parent.name == "logs":
+                # This is <parent>/logs/<timestamp>/probabilities/
+                prob_dir = logdir_path
+                run_folder_name = logdir_path.name
+                # logdir for the exporter must be the folder containing
+                # the timestamp folder, i.e., <parent>/logs/
+                effective_logdir = str(logdir_path.parent)
+
+        # B2: user entered the <parent>/logs/ folder
+        if prob_dir is None:
+            candidates = sorted(logdir_path.glob("*/probabilities"))
+            if candidates:
+                # candidates look like <parent>/logs/<timestamp>/probabilities/
+                prob_dir = candidates[0].parent
+                run_folder_name = prob_dir.name
+                effective_logdir = logdir  # already <parent>/logs/
+
+        # B3: user entered the <parent>/ folder
+        if prob_dir is None:
+            candidates = sorted(logdir_path.glob("logs/*/probabilities"))
+            if candidates:
+                # candidates look like <parent>/logs/<timestamp>/probabilities/
+                prob_dir = candidates[0].parent
+                run_folder_name = prob_dir.name
+                # logdir for the exporter must be <parent>/logs/
+                effective_logdir = str(logdir_path / "logs")
+
+        # Fallback for run_folder_name
+        if run_folder_name is None:
+            if logdir_path.name == "logs":
+                run_folder_name = logdir_path.parent.name
             else:
-                prompt = "Enter path to TensorBoard logs folder: "
+                run_folder_name = logdir_path.name
 
-            logdir = input(prompt).strip()
-            if not logdir:
-                print("Cancelled.")
-                return
+        # Report
+        if prob_dir is not None:
+            print(f"  ✓ Probability directory detected: {prob_dir}")
+            print(f"  Effective logdir for exporter: {effective_logdir}")
+        else:
+            print(f"  ⚠ No probability directory found. ROC/PR curves will be skipped.")
 
-            # The ROC/PR epoch selector is derived inside TensorBoardExporter
-            # from chckpt_selection_method, so training and export stay in sync.
+        # Determine output filename
+        cnn_type = setting.get('cnn_type', 'unknown')
+        if mode == 'crossval':
+            output_filename = f"train_metrics_cv_{cnn_type}.xlsx"
+        elif mode == 'single':
+            output_filename = f"train_metrics_single_{run_folder_name}.xlsx"
+        else:
+            if prob_dir is not None and "cross_validation" in str(prob_dir):
+                output_filename = f"train_metrics_cv_{cnn_type}.xlsx"
+            else:
+                output_filename = f"train_metrics_single_{run_folder_name}.xlsx"
+
+        output_path = setting['pth_output'] / output_filename
+        print(f"  Output file: {output_path}")
+
+        try:
             exporter = TensorBoardExporter(
-                logdir=logdir,
-                output_file=setting['pth_output'] / "train_metrics.xlsx",
-                prob_dir=None,
-                mode=mode,
+                logdir=effective_logdir,
+                output_file=output_path,
+                prob_dir=prob_dir,
+                roc_epoch=setting.get('export_excel_roc_epoch', 'balanced_accuracy'),
+                pr_epoch=setting.get('export_excel_pr_epoch', 'balanced_accuracy'),
+                mode=mode
             )
             exporter.export_with_charts()
         except Exception as e:
@@ -213,30 +322,31 @@ class ExportPlottingMenu:
             print("  Example: output/cross_validation/")
         elif mode == 'single':
             print("  Mode: SINGLE TRAINING")
-            print("  Enter the path to the logs/ folder")
-            print("  Example: output/train/20260909-143022/logs/")
+            print("  Enter the path to the training output folder")
+            print("  (contains one or more timestamp folders with a 'logs/' subfolder)")
+            print("  Example: output/train/ or output/train/20260910_143022/")
         else:
             print("  Mode: AUTO (will detect from folder structure)")
-            print("  Enter the path to the logs folder (single training)")
+            print("  Enter the path to the training output folder (single training)")
             print("  or the cross_validation/ folder (cross-validation)")
         
         print()
 
+        confirm = input("Continue? (yes/no): ").strip().lower()
+        if confirm not in ['yes', 'y']:
+            print("Operation cancelled.")
+            return
+
         if mode == 'crossval':
             prompt = "Enter path to cross_validation folder: "
         elif mode == 'single':
-            prompt = "Enter path to logs folder: "
+            prompt = "Enter path to training output folder: "
         else:
             prompt = "Enter path to TensorBoard logs folder: "
         
         logdir = input(prompt).strip()
         if not logdir:
             print("Cancelled.")
-            return
-
-        confirm = input("Continue? (yes/no): ").strip().lower()
-        if confirm not in ['yes', 'y']:
-            print("Operation cancelled.")
             return
 
         try:

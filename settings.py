@@ -510,11 +510,16 @@ setting = {
     # EXPORT & PLOTTING      #
     ##########################
 
-    ### General Export Settings for Plot and Excel export scripts###
+    ### General Export Settings for Plot and Excel export scripts ###
     # Mode for all export tools: 'auto' (auto-detect), 'crossval', or 'single'
-    # 'auto': Detects from folder structure (dsXX = crossval, timestamp = single)
-    # 'crossval': Forces cross-validation mode (expects dsXX folders)
-    # 'single': Forces single training mode (expects timestamp folders)
+    # 'auto': Detects from folder structure. Cross-validation runs are identified
+    #         by 'dataset_XX' folders (each containing its own 'logs/' subfolder).
+    #         Single training runs are identified by timestamp folders
+    #         (YYYYMMDD-HHMMSS) with a 'logs/' subfolder, or by direct
+    #         events.out.tfevents.* files in the specified directory.
+    # 'crossval': Forces cross-validation mode (expects 'dataset_XX' folders).
+    # 'single': Forces single training mode (any folder containing a 'logs/'
+    #           subfolder with event files; typically a timestamp).
     "export_mode": "auto",
 
     # Training Metrics Plotter (plot_train_metrics_publication.py) ###
