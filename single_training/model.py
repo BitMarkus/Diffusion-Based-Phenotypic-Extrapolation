@@ -182,6 +182,7 @@ class CNN_Model():
 
         # Final setup
         self.model.to(device)
+        self.device = device
         self.model_loaded = True
         return self.model
 
@@ -428,12 +429,45 @@ class CNN_Model():
                 num_correct += (predictions == labels).sum()
                 num_samples += predictions.size(0)
 
-                cm["y"].append(labels.item())
-                cm["y_hat"].append(predictions.item())
+                cm["y"].extend(labels.cpu().numpy().tolist())
+                cm["y_hat"].extend(predictions.cpu().numpy().tolist())
 
         acc = num_correct / num_samples
         self.model.train()
         return acc, cm
+
+    # Predict classes AND return full probability matrix for ROC/PR computation.
+    # Unlike predict(), this method does not assume a batch size of 1 and
+    # returns the full softmax probability vector for each image.
+    # Args:
+    #   dataset (torch.utils.data.Dataset): The dataset to predict on
+    # Returns:
+    #   tuple: (probs, labels) as numpy arrays
+    #          probs: shape (n_samples, n_classes)
+    #          labels: shape (n_samples,)
+    def predict_with_probs(self, dataset) -> tuple:
+        import torch.nn.functional as F
+        import numpy as np
+
+        self.model.eval()
+        all_probs = []
+        all_labels = []
+
+        with torch.no_grad():
+            for images, labels in tqdm(dataset):
+                images = images.to(self.device)
+
+                scores = self.model(images)
+                probs = F.softmax(scores, dim=1)
+
+                all_probs.append(probs.cpu().numpy())
+                all_labels.extend(labels.numpy())
+
+        probs_array = np.concatenate(all_probs, axis=0)
+        labels_array = np.array(all_labels)
+
+        self.model.train()
+        return probs_array, labels_array
 
     # Print the number of trainable parameters in the model.
     def print_model_size(self) -> None:

@@ -400,19 +400,23 @@ class ConfidenceAnalyzer:
         with torch.no_grad():
             with autocast(device_type='cuda', enabled=self.device.type == 'cuda'):
                 with tqdm(test_loader, desc="Predicting images", total=total_images, position=0, leave=False) as img_pbar:
-                    for batch_idx, (images, labels) in enumerate(img_pbar):
-                        img_path = test_loader.dataset.dataset.samples[test_loader.dataset.indices[batch_idx]][0]
+                    img_idx = 0
+                    for images, labels in img_pbar:
                         images = images.to(self.device)
-                        if images.dim() == 3:
-                            images = images.unsqueeze(0)
                         outputs = self.cnn(images)
                         probs = torch.nn.functional.softmax(outputs, dim=1)
                         max_prob, pred_idx = torch.max(probs, 1)
-                        confidences[img_path] = (
-                            self.classes[labels.item()],
-                            self.classes[pred_idx.item()],
-                            max_prob.item()
-                        )
+
+                        for i in range(images.size(0)):
+                            img_path = test_loader.dataset.dataset.samples[
+                                test_loader.dataset.indices[img_idx]
+                            ][0]
+                            confidences[img_path] = (
+                                self.classes[labels[i].item()],
+                                self.classes[pred_idx[i].item()],
+                                max_prob[i].item()
+                            )
+                            img_idx += 1
         return confidences
 
     # Organize prediction results into structured format.

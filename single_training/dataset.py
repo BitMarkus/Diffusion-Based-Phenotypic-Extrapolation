@@ -39,9 +39,8 @@ class Dataset():
         self.shuffle_seed = setting["ds_shuffle_seed"]
         # Batch size for training and validation datasets (for 512x512 -> 24)
         self.batch_size = setting["ds_batch_size"]
-        # Batch size for prediction dataset
-        # Always needs to be 1! Or calculation of confusion matrix parameters are more complicated
-        self.batch_size_pred = 1
+        # Batch size for inference (test evaluation during cross-validation)
+        self.batch_size_pred = setting["ds_batch_size_pred"]
         # How many subprocesses are used to load data in parallel
         self.num_workers = setting["ds_num_workers"]
 
@@ -61,6 +60,7 @@ class Dataset():
         # Number of training and validation batches in each dataset
         self.num_train_batches = 0
         self.num_val_batches = 0
+        self.num_test_after_val_batches = 0
         # Datasets
         self.ds_train = None
         self.ds_val = None
@@ -414,6 +414,7 @@ class Dataset():
                 pin_memory=True
             )
 
+            self.num_test_after_val_batches = len(self.ds_test_for_test) 
             self.ds_val = self.ds_test_for_val
             self.num_val_img = self.num_val_from_test_img
             self.num_val_batches = len(self.ds_val)
@@ -425,6 +426,8 @@ class Dataset():
                 persistent_workers=True,
                 pin_memory=True
             )
+
+            self.num_test_after_val_batches = len(self.ds_test_for_test)
             self.num_test_after_val_img = dataset_size
 
         self.ds_test = self.ds_test_for_test
@@ -440,7 +443,7 @@ class Dataset():
             dataset = torchvision.datasets.ImageFolder(self.pth_input, transform=transformer)
             prediction_loader = DataLoader(
                 dataset,
-                batch_size=self.batch_size_pred,
+                batch_size=1,
                 shuffle=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,

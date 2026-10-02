@@ -21,6 +21,12 @@ setting = {
     "train_num_epochs": 40, # 40
     # Batch size for training and validation datasets
     "ds_batch_size": 50,
+    # Batch size for inference during test evaluation (cross-validation).
+    # Distinct from ds_batch_size because training and inference have
+    # different memory profiles and different throughput requirements.
+    # Batch size does not affect the predictions themselves — only speed
+    # and peak memory usage.
+    "ds_batch_size_pred": 50,
 
     # Optimizer:
     # Options: "SGD", "ADAM", and "ADAMW"
@@ -74,7 +80,7 @@ setting = {
     # Validation split from images in folder data/train/ (False or percentage 0.0-1.0)
     "ds_val_from_train_split": False,    # False
     # Validation split from images in folder data/test/ (False or percentage 0.0-1.0)
-    "ds_val_from_test_split": 1.0,    # 1.0
+    "ds_val_from_test_split": 0.3,    # 1.0
     # Export validation images to a folder
     "ds_save_val_images": False,
 
@@ -226,7 +232,7 @@ setting = {
     # EfficientNet: efficientnet_b0, efficientnet_b3, efficientnet_b4, efficientnet_b7
     # ConvNeXt: convnext_tiny, convnext_small
     # Custom CNN architecture: custom
-    "cnn_type": "convnext_tiny",  # densenet121
+    "cnn_type": "densenet121",  # densenet121
     # Pretrained or initialized weights
     "cnn_is_pretrained": True,
     # Initialization type for non-pretrained cnns
@@ -795,7 +801,7 @@ setting = {
     #
     # The two modes are mutually exclusive. Set the switch, then only
     # configure the settings for the mode you chose.
-    "export_cm_use_fixed_height": False,
+    "export_cm_use_fixed_height": True,
     # Height of the matrix rectangle in inches (only used in Mode 1)
     # The figure height is fixed_height + top_margin + bottom_margin.
     # 4-6: Good for small matrices (<10 classes)

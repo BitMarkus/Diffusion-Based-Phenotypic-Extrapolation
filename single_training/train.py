@@ -1149,8 +1149,16 @@ class Train():
 
         # Final summary
         print(f"\n>> Training completed!")
-        print(f"   Best Balanced Accuracy: {best_balanced_acc:.4f} at epoch {best_epoch_bal+1}")
-        print(f"   Best Composite Score: {best_composite_score:.4f} at epoch {best_epoch_comp+1}")
+
+        if best_epoch_bal >= 0:
+            print(f"   Best Balanced Accuracy: {best_balanced_acc:.4f} at epoch {best_epoch_bal+1}")
+        else:
+            print(f"   Best Balanced Accuracy: no checkpoint saved")
+
+        if best_epoch_comp >= 0:
+            print(f"   Best Composite Score: {best_composite_score:.4f} at epoch {best_epoch_comp+1}")
+        else:
+            print(f"   Best Composite Score: no checkpoint saved")
 
         # Final cleanup and plotting
         if self.writer is not None:

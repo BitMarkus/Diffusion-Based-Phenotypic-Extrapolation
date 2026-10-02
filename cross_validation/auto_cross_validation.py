@@ -6,13 +6,17 @@
 from pathlib import Path
 import json
 import shutil
+import gc
+import time
 # ===== Third-Party Imports =====
 import torch
+import numpy as np
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
 # ===== Own Modules =====
-from .dataset_gen import DatasetGenerator  
-from single_training import Dataset 
-from single_training import CNN_Model 
-from single_training import Train  
+from .dataset_gen import DatasetGenerator
+from single_training import Dataset
+from single_training import CNN_Model
+from single_training import Train
 from settings import setting
 import functions as fn
 
@@ -49,10 +53,11 @@ class AutoCrossValidation:
         # Output directory for cross-validation results
         self.acv_results_dir = setting['pth_output'] / "cross_validation"
 
-        # Objects
+        # Objects (initialized to None so cleanup between folds is safe)
         self.ds_gen = DatasetGenerator(mode="acv")
-        self.ds = Dataset()
+        self.ds = None
         self.cnn_wrapper = None
+        self.train = None
 
     #############################################################################################################
     # METHODS
@@ -165,6 +170,48 @@ class AutoCrossValidation:
             shutil.copy2(settings_src, settings_dst)
             print(f"✓ Settings file copied to: {settings_dst}")
 
+    # Compute ROC and PR curves from probabilities and true labels.
+    # Args:
+    #   probs (np.ndarray): Probability matrix of shape (n_samples, n_classes)
+    #   labels (np.ndarray): True label array of shape (n_samples,)
+    # Returns:
+    #   dict: Per-class ROC and PR data, plus macro-averaged AUC and AP
+    def _compute_roc_pr_curves(self, probs: np.ndarray, labels: np.ndarray) -> dict:
+        per_class_data = {}
+
+        for i, class_name in enumerate(self.class_list):
+            # One-vs-rest for this class
+            y_true = (labels == i).astype(int)
+            y_score = probs[:, i]
+
+            # ROC curve
+            fpr, tpr, _ = roc_curve(y_true, y_score)
+            roc_auc_val = auc(fpr, tpr)
+
+            # PR curve
+            precision, recall, _ = precision_recall_curve(y_true, y_score)
+            avg_precision = average_precision_score(y_true, y_score)
+
+            per_class_data[class_name] = {
+                'fpr': fpr.tolist(),
+                'tpr': tpr.tolist(),
+                'roc_auc': float(roc_auc_val),
+                'recall': recall.tolist(),
+                'precision': precision.tolist(),
+                'average_precision': float(avg_precision)
+            }
+
+        # Macro-average AUC and AP (simple mean across classes)
+        macro_auc = float(np.mean([per_class_data[c]['roc_auc'] for c in self.class_list]))
+        macro_ap = float(np.mean([per_class_data[c]['average_precision'] for c in self.class_list]))
+
+        return {
+            'classes': self.class_list,
+            'per_class': per_class_data,
+            'macro_auc': macro_auc,
+            'macro_ap': macro_ap
+        }
+
     #############################################################################################################
     # CALL
 
@@ -172,6 +219,7 @@ class AutoCrossValidation:
     # Iterates over all WT/KO line combinations, trains a model on each combination,
     # and saves results to the output/cross_validation directory.
     def __call__(self) -> None:
+
         print("\nCleaning up old train and test data...")
         self.ds_gen.cleanup(self.data_dir)
         print("Cleanup finished.")
@@ -221,19 +269,44 @@ class AutoCrossValidation:
             configs = filtered
 
             if skipped:
-                print(f"\nSkipping folds that already have checkpoints: {sorted(skipped)}")
+                print(f"\nNote: Skipping folds that already have checkpoints: {sorted(skipped)}")
 
         if not configs:
             print("\nNo folds to process. Exiting.")
             return
 
         for config in configs:
+            # Release the previous fold's Python objects and GPU memory BEFORE
+            # creating new ones. Without this, references to the old Dataset,
+            # Train, and CNN_Model instances (and their DataLoader worker
+            # processes and CUDA tensors) persist across folds and RAM grows
+            # steadily until the OS kills the process.
+            del self.ds
+            del self.train
+            del self.cnn_wrapper
+
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+            # Delete the previous fold's temporary train/test folders on disk.
+            # Retry because on Windows the DataLoader worker processes may still
+            # hold file handles for a short moment after the Python objects are
+            # released, causing shutil.rmtree to fail with PermissionError.
+            for attempt in range(3):
+                try:
+                    self.ds_gen.cleanup(self.data_dir)
+                    break
+                except PermissionError:
+                    if attempt < 2:
+                        time.sleep(1)
+                    else:
+                        raise
+
+            # Now create fresh objects for this fold
             self.ds = Dataset()
             self.cnn_wrapper = CNN_Model()
             self.reset_model()
-
-            self.ds_gen.cleanup(self.data_dir)
-            torch.cuda.empty_cache()
 
             ##################
             # Create dataset #
@@ -273,6 +346,8 @@ class AutoCrossValidation:
                 print(f"Dataset {config['dataset_idx']} successfully loaded.")
                 print(f"Number training images/batches: {self.ds.num_train_img}/{self.ds.num_train_batches}")
                 print(f"Number validation images/batches: {self.ds.num_val_img}/{self.ds.num_val_batches}")
+                if self.val_from_test_split is not False and self.val_from_test_split != 1.0:
+                    print(f"Number test images/batches: {self.ds.num_test_after_val_img}/{self.ds.num_test_after_val_batches}")
 
             ####################
             # Train on dataset #
@@ -328,6 +403,7 @@ class AutoCrossValidation:
 
                                 print(f"\n  > Testing checkpoint epoch {epoch} (val_acc={acc}%)...")
 
+                                # --- Confusion matrix (existing) ---
                                 _, cm = self.cnn_wrapper.predict(test_dataset)
 
                                 chckpt_name = f"ckpt_{pretrained_str}_{model_name}_test_e{epoch}_vacc{acc}_ds{config['dataset_idx']}"
@@ -355,6 +431,26 @@ class AutoCrossValidation:
                                     print(f"    Test accuracy: {(loaded_results['overall_accuracy']*100):.2f}%")
                                     print(f"    Test WT: {(loaded_results['class_accuracy']['WT']*100):.2f}%")
                                     print(f"    Test KO: {(loaded_results['class_accuracy']['KO']*100):.2f}%")
+
+                                # --- ROC/PR curves ---
+                                try:
+                                    print(f"    Computing ROC/PR curves...")
+                                    probs, labels = self.cnn_wrapper.predict_with_probs(test_dataset)
+                                    roc_pr_data = self._compute_roc_pr_curves(probs, labels)
+
+                                    # Add metadata
+                                    roc_pr_data['epoch'] = epoch
+                                    roc_pr_data['val_acc'] = acc
+                                    roc_pr_data['dataset_idx'] = config['dataset_idx']
+
+                                    roc_pr_file = checkpoint_dir.parent / "plots" / f"{chckpt_name}_test_roc_pr.json"
+                                    with open(roc_pr_file, 'w') as f:
+                                        json.dump(roc_pr_data, f, indent=2)
+
+                                    print(f"    ✓ ROC/PR curves saved: {roc_pr_file.name}")
+                                    print(f"      Macro AUC: {roc_pr_data['macro_auc']:.4f}, Macro AP: {roc_pr_data['macro_ap']:.4f}")
+                                except Exception as e:
+                                    print(f"    ⚠ Failed to compute ROC/PR curves: {str(e)}")
 
                                 del checkpoint
                                 torch.cuda.empty_cache()
