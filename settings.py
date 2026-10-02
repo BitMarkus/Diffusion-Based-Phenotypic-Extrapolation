@@ -912,4 +912,42 @@ setting = {
     "pth_output": BASE_DIR / "output/",
     # All analysis outputs go into output/ with subfolders created by each script
     # e.g., output/train/, output/cross_validation/, output/conf_analyzer/, etc.
+
+
+
+    # ===========================================================================================
+    # BATCH SIZE REFERENCE TABLE
+    # -------------------------------------------------------------------------------------------
+    # Which setting controls the batch size for which part of the codebase.
+    # Batch size affects inference speed and peak memory, but not prediction values.
+    # Training batch size also affects convergence and should be tuned separately.
+    #
+    # +---------------------+------------------------------------------+-------------------------+
+    # | Setting             | Used by                                  | Task                    |
+    # +---------------------+------------------------------------------+-------------------------+
+    # | ds_batch_size       | single_training / cross_validation       | Training loop           |
+    # |                     |   - Train.train() training loop          | (forward + backward)    |
+    # |                     |   - validation loop during training      | and validation          |
+    # +---------------------+------------------------------------------+-------------------------+
+    # | ds_batch_size_pred  | cross_validation (test evaluation)       | Inference               |
+    # |                     |   - ds_test_for_test                     | (forward only)          |
+    # |                     |   - ds_test_real_only                    |                         |
+    # |                     |   - AutoCrossValidation test loop        |                         |
+    # |                     | conf_analyzer                            |                         |
+    # |                     |   - _create_filtered_dataset()           |                         |
+    # |                     | class_analyzer                           |                         |
+    # |                     |   - via ds.batch_size_pred               |                         |
+    # +---------------------+------------------------------------------+-------------------------+
+    # | sort_pred_batch_size| class_sorter                             | Inference               |
+    # |                     |   - own DataLoader over Subset           | (input/ folder)         |
+    # +---------------------+------------------------------------------+-------------------------+
+    # | fid_batch_size      | fid_calculator                           | Inference               |
+    # |                     |   - InceptionV3 feature extraction       | (InceptionV3, 299x299)  |
+    # +---------------------+------------------------------------------+-------------------------+
+    #
+    # Note: dataset.load_pred_dataset() is intentionally hardcoded to batch_size=1.
+    # Scripts that consume ds.ds_pred (dim_red, gradcam_analyzer) either rebuild their
+    # own loader or process images one at a time, so this is safe and does not slow
+    # down anything that matters.
+    # ===========================================================================================
 }
