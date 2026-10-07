@@ -696,13 +696,13 @@ class ConfidenceAnalyzer:
                 balanced_acc_test = None
                 overall_acc_test = None
 
-                test_candidates = list(plots_path.glob(f"*_e{epoch_num:02d}_*_test_cm.json"))
+                test_candidates = list(plots_path.glob(f"*_test_e{epoch_num:02d}_*cm.json"))
                 if not test_candidates:
-                    test_candidates = list(plots_path.glob(f"*_e{epoch_num}_*_test_cm.json"))
+                    test_candidates = list(plots_path.glob(f"*_test_e{epoch_num}_*cm.json"))
                 if not test_candidates:
-                    test_candidates = list(plots_path.glob(f"*e{epoch_num:02d}*test_cm.json"))
+                    test_candidates = list(plots_path.glob(f"*test_e{epoch_num:02d}*cm.json"))
                 if not test_candidates:
-                    test_candidates = list(plots_path.glob(f"*e{epoch_num}*test_cm.json"))
+                    test_candidates = list(plots_path.glob(f"*test_e{epoch_num}*cm.json"))
 
                 if test_candidates:
                     try:
