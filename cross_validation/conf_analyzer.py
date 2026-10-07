@@ -624,8 +624,13 @@ class ConfidenceAnalyzer:
         return output_dir
 
     # Export information about which checkpoints were used for analysis.
-    # Export the merged per-checkpoint report: accuracies, composite score,
-    # and mean softmax confidences. One row per (dataset, checkpoint).
+    # Export the merged per-checkpoint report: validation and test accuracies,
+    # composite score, and mean softmax confidences. One row per (dataset, checkpoint).
+    # Test columns are only populated when the corresponding *_test_cm.json file
+    # exists in the plots folder (i.e., when the cross-validation run used a
+    # validation/test split, ds_val_from_test_split < 1.0). For runs that used
+    # the full held-out set for validation (ds_val_from_test_split = 1.0), the
+    # test columns will be empty.
     def _export_used_checkpoints(self, results: dict) -> bool:
         print("\n>> Exporting used checkpoints report...")
 
@@ -654,6 +659,7 @@ class ConfidenceAnalyzer:
                 cross_val_dir = self.pth_output / "cross_validation"
                 plots_path = cross_val_dir / f"dataset_{dataset_num}" / 'plots'
 
+                # --- Read validation CM (used for checkpoint selection) ---
                 json_candidates = list(plots_path.glob(f"*_e{epoch_num:02d}_*_val_cm.json"))
                 if not json_candidates:
                     json_candidates = list(plots_path.glob(f"*_e{epoch_num}_*_val_cm.json"))
@@ -663,69 +669,100 @@ class ConfidenceAnalyzer:
                     json_candidates = list(plots_path.glob(f"*e{epoch_num}*val_cm.json"))
 
                 if not json_candidates:
-                    print(f"  WARNING: No JSON found for {ckpt_name} (epoch {epoch_num})")
+                    print(f"  WARNING: No validation CM JSON found for {ckpt_name} (epoch {epoch_num})")
                     continue
 
                 try:
                     with open(json_candidates[0], 'r') as f:
-                        cm_data = json.load(f)
+                        cm_data_val = json.load(f)
 
-                    class_accuracy = cm_data['class_accuracy']
-                    wt_acc = class_accuracy.get('WT', 0)
-                    ko_acc = class_accuracy.get('KO', 0)
-                    overall_acc = cm_data.get('overall_accuracy', 0)
+                    class_accuracy_val = cm_data_val['class_accuracy']
+                    wt_acc_val = class_accuracy_val.get('WT', 0)
+                    ko_acc_val = class_accuracy_val.get('KO', 0)
+                    overall_acc_val = cm_data_val.get('overall_accuracy', 0)
+                    balanced_acc_val = (wt_acc_val + ko_acc_val) / 2
 
-                    # Balanced accuracy = mean of per-class accuracies
-                    balanced_acc = (wt_acc + ko_acc) / 2
-
-                    # Composite score is always computed
-                    class_accuracies = {'WT': wt_acc, 'KO': ko_acc}
-                    composite_score, _, _ = self._calculate_composite_score(
-                        class_accuracies, overall_acc, penalty_weight=self.penalty_weight
+                    class_accuracies_val = {'WT': wt_acc_val, 'KO': ko_acc_val}
+                    composite_score_val, _, _ = self._calculate_composite_score(
+                        class_accuracies_val, overall_acc_val, penalty_weight=self.penalty_weight
                     )
-
-                    # Collect mean confidences for this checkpoint
-                    pred_data = checkpoints.get(ckpt_name, {})
-                    aggregated = pred_data.get('aggregated_stats', {})
-
-                    wt_conf_list = aggregated.get('WT', {}).get('all_confidences', [])
-                    ko_conf_list = aggregated.get('KO', {}).get('all_confidences', [])
-
-                    wt_mean_conf = sum(wt_conf_list) / len(wt_conf_list) if wt_conf_list else None
-                    ko_mean_conf = sum(ko_conf_list) / len(ko_conf_list) if ko_conf_list else None
-
-                    all_conf = wt_conf_list + ko_conf_list
-                    overall_mean_conf = sum(all_conf) / len(all_conf) if all_conf else None
-
-                    rows.append({
-                        'dataset': dataset_num,
-                        'test_wt': config['test_wt'],
-                        'test_ko': config['test_ko'],
-                        'checkpoint': ckpt_name,
-                        'epoch': epoch_num,
-                        'wt_accuracy': wt_acc,
-                        'ko_accuracy': ko_acc,
-                        'balanced_accuracy': balanced_acc,
-                        'overall_accuracy': overall_acc,
-                        'composite_score': composite_score,
-                        'wt_mean_confidence': wt_mean_conf,
-                        'ko_mean_confidence': ko_mean_conf,
-                        'overall_mean_confidence': overall_mean_conf,
-                        'selection_method': self.ckpt_select_method if was_filtered else 'none',
-                        'max_checkpoints': self.max_ckpts if was_filtered else len(checkpoint_files),
-                        'was_filtered': was_filtered,
-                        'cm_source': self.cm_source,
-                        'cm_file_pattern': self.cm_file_pattern,
-                        'split_used': self.split_to_use,
-                    })
-
                 except Exception as e:
-                    print(f"  ERROR processing {ckpt_name}: {str(e)}")
+                    print(f"  ERROR processing validation CM for {ckpt_name}: {str(e)}")
                     continue
+
+                # --- Read test CM if it exists (populated for runs with a validation/test split) ---
+                wt_acc_test = None
+                ko_acc_test = None
+                balanced_acc_test = None
+                overall_acc_test = None
+
+                test_candidates = list(plots_path.glob(f"*_e{epoch_num:02d}_*_test_cm.json"))
+                if not test_candidates:
+                    test_candidates = list(plots_path.glob(f"*_e{epoch_num}_*_test_cm.json"))
+                if not test_candidates:
+                    test_candidates = list(plots_path.glob(f"*e{epoch_num:02d}*test_cm.json"))
+                if not test_candidates:
+                    test_candidates = list(plots_path.glob(f"*e{epoch_num}*test_cm.json"))
+
+                if test_candidates:
+                    try:
+                        with open(test_candidates[0], 'r') as f:
+                            cm_data_test = json.load(f)
+
+                        class_accuracy_test = cm_data_test['class_accuracy']
+                        wt_acc_test = class_accuracy_test.get('WT', 0)
+                        ko_acc_test = class_accuracy_test.get('KO', 0)
+                        overall_acc_test = cm_data_test.get('overall_accuracy', 0)
+                        balanced_acc_test = (wt_acc_test + ko_acc_test) / 2
+                    except Exception as e:
+                        print(f"  WARNING: Could not read test CM for {ckpt_name} (epoch {epoch_num}): {e}")
+
+                # --- Collect mean confidences for this checkpoint ---
+                pred_data = checkpoints.get(ckpt_name, {})
+                aggregated = pred_data.get('aggregated_stats', {})
+
+                wt_conf_list = aggregated.get('WT', {}).get('all_confidences', [])
+                ko_conf_list = aggregated.get('KO', {}).get('all_confidences', [])
+
+                wt_mean_conf = sum(wt_conf_list) / len(wt_conf_list) if wt_conf_list else None
+                ko_mean_conf = sum(ko_conf_list) / len(ko_conf_list) if ko_conf_list else None
+
+                all_conf = wt_conf_list + ko_conf_list
+                overall_mean_conf = sum(all_conf) / len(all_conf) if all_conf else None
+
+                rows.append({
+                    'dataset': dataset_num,
+                    'test_wt': config['test_wt'],
+                    'test_ko': config['test_ko'],
+                    'checkpoint': ckpt_name,
+                    'epoch': epoch_num,
+                    # Validation metrics (used for checkpoint selection)
+                    'wt_accuracy_val': wt_acc_val,
+                    'ko_accuracy_val': ko_acc_val,
+                    'balanced_accuracy_val': balanced_acc_val,
+                    'overall_accuracy_val': overall_acc_val,
+                    'composite_score_val': composite_score_val,
+                    # Test metrics (only populated if a test CM file exists)
+                    'wt_accuracy_test': wt_acc_test,
+                    'ko_accuracy_test': ko_acc_test,
+                    'balanced_accuracy_test': balanced_acc_test,
+                    'overall_accuracy_test': overall_acc_test,
+                    # Confidence statistics
+                    'wt_mean_confidence': wt_mean_conf,
+                    'ko_mean_confidence': ko_mean_conf,
+                    'overall_mean_confidence': overall_mean_conf,
+                    # Metadata
+                    'selection_method': self.ckpt_select_method if was_filtered else 'none',
+                    'max_checkpoints': self.max_ckpts if was_filtered else len(checkpoint_files),
+                    'was_filtered': was_filtered,
+                    'cm_source': self.cm_source,
+                    'cm_file_pattern': self.cm_file_pattern,
+                    'split_used': self.split_to_use,
+                })
 
         if rows:
             df = pd.DataFrame(rows)
-            df = df.sort_values(['dataset', 'balanced_accuracy'], ascending=[True, False])
+            df = df.sort_values(['dataset', 'balanced_accuracy_val'], ascending=[True, False])
             output_path = self.pth_conf_analizer_results / 'confidence_analysis.csv'
             df.to_csv(output_path, index=False)
             print(f"  ✓ Saved report to: {output_path}")
