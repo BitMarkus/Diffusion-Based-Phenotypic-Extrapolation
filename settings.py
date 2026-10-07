@@ -26,7 +26,7 @@ setting = {
     # different memory profiles and different throughput requirements.
     # Batch size does not affect the predictions themselves — only speed
     # and peak memory usage.
-    "ds_batch_size_pred": 50,
+    "ds_batch_size_pred": 100,
 
     # Optimizer:
     # Options: "SGD", "ADAM", and "ADAMW"
@@ -277,7 +277,7 @@ setting = {
     # Rename files with either confidence scores, logit values, or both
     "sort_rename_images": True,
     # Batch size for prediction
-    "sort_pred_batch_size": 50,
+    "sort_pred_batch_size": 100,
     # Interval borders for confidence statistics
     "sort_conf_intervals": [10, 20, 30, 40, 50, 60, 70, 80, 90],
     # Interval borders for logit statistics
@@ -318,7 +318,7 @@ setting = {
     # Which set of images to run predictions on for confidence analysis
     # Decides which actual images to feed through the model for prediction
     # Options: "validation", "test", "all"
-    "ca_split_to_use": "validation",
+    "ca_split_to_use": "all",
     # Rename filtered images with the average confidence in the filename
     # If False, images keep their original filenames
     "ca_rename_with_confidence": False,

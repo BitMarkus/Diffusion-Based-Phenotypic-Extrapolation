@@ -357,6 +357,12 @@ class ConfidenceAnalyzer:
                         except:
                             tqdm.write(f"  {checkpoint_file}")
 
+        # Build the filtered loader ONCE for this fold.
+        # This ensures the DataLoader workers are spawned a single time per fold
+        # and reused across all checkpoints, instead of being re-created for every
+        # checkpoint (which was the main source of the slowdown).
+        test_loader = self._create_filtered_dataset(dataset_num)
+
         with tqdm(checkpoint_files, desc=f"Dataset {dataset_num}/{total_datasets} - Checkpoints", position=1, leave=False) as pbar:
             for checkpoint_file in pbar:
                 checkpoint_path = checkpoints_path / checkpoint_file
@@ -377,7 +383,7 @@ class ConfidenceAnalyzer:
                         tqdm.write(f"  Loaded checkpoint as direct state_dict")
 
                     self.cnn.eval()
-                    confidences = self._get_predictions_with_confidence(dataset_num)
+                    confidences = self._get_predictions_with_confidence(test_loader)
                     dataset_results[checkpoint_file] = self._organize_prediction_results(confidences)
                 except Exception as e:
                     tqdm.write(f"\nError processing {checkpoint_file}: {str(e)}")
@@ -388,18 +394,19 @@ class ConfidenceAnalyzer:
         return dataset_results
 
     # Get predictions with confidence scores for all images in the test set.
-    def _get_predictions_with_confidence(self, dataset_num: int) -> dict:
-        test_loader = self._create_filtered_dataset(dataset_num)
+    # Args:
+    #   test_loader: A pre-built DataLoader over the filtered dataset
+    def _get_predictions_with_confidence(self, test_loader) -> dict:
         confidences = {}
-        total_images = len(test_loader.dataset)
+        total_batches = len(test_loader)
 
-        if total_images == 0:
-            tqdm.write(f"  WARNING: No images to predict for dataset {dataset_num}!")
+        if total_batches == 0:
+            tqdm.write(f"  WARNING: No images to predict!")
             return confidences
 
         with torch.no_grad():
             with autocast(device_type='cuda', enabled=self.device.type == 'cuda'):
-                with tqdm(test_loader, desc="Predicting images", total=total_images, position=0, leave=False) as img_pbar:
+                with tqdm(test_loader, desc="Predicting images", total=total_batches, position=0, leave=False) as img_pbar:
                     img_idx = 0
                     for images, labels in img_pbar:
                         images = images.to(self.device)
@@ -829,7 +836,8 @@ class ConfidenceAnalyzer:
             filtered_dataset,
             batch_size=ds.ds_test.batch_size,
             num_workers=ds.ds_test.num_workers,
-            pin_memory=ds.ds_test.pin_memory
+            pin_memory=ds.ds_test.pin_memory,
+            persistent_workers=True
         )
 
         tqdm.write(f"\nFiltered dataset: {len(filtered_indices)} images from '{self.split_to_use}' split (originally {len(ds.ds_test.dataset)})")
