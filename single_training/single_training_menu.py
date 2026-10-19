@@ -95,18 +95,71 @@ class SingleTrainingMenu:
             print(f"Number validation images/batches: {self.ds.num_val_img}/{self.ds.num_val_batches}")
 
     # Train Network.
+    # Fully automated: builds a fresh Dataset and CNN_Model internally, so the
+    # user does not need to use options 1 and 3 before training.
+    # If ds_shuffle_seed is a list with multiple entries, runs one training per seed,
+    # with each run saved to output/train/<parent_timestamp>/seed_<NN>/.
+    # For a single seed, uses the standard output/train/<timestamp>/ folder.
     def _train_network(self, device) -> None:
+        from datetime import datetime
+
         print("\n:TRAIN NETWORK:")
-        print("  Results will be saved to output/train/[timestamp]/")
-        if not self.cnn_wrapper.model_loaded:
-            print('No CNN generated yet!')
-        elif not self.ds.ds_loaded:
-            print('No training data loaded yet!')
+
+        seeds = self.ds.shuffle_seed_list
+        multi_seed = len(seeds) > 1
+
+        if multi_seed:
+            print(f"  Seeds: {seeds}")
+            print(f"  Mode: multi-seed sweep ({len(seeds)} runs)")
+            parent_ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            parent_dir = setting['pth_output'] / "train" / parent_ts
+            parent_dir.mkdir(parents=True, exist_ok=True)
+            print(f"  Results will be saved to: {parent_dir}")
         else:
-            print("Start training...")
-            train = Train(self.cnn_wrapper, self.ds, device)
+            print(f"  Seed: {seeds[0]}")
+            print(f"  Mode: single training")
+            print(f"  Results will be saved to: output/train/<timestamp>/")
+            parent_dir = None
+
+        for seed in seeds:
+            print(f"\n{'='*60}")
+            print(f">>> TRAINING WITH SEED {seed}")
+            print(f"{'='*60}")
+
+            # Fresh dataset for this seed
+            ds = Dataset()
+            ds.set_shuffle_seed(seed)
+            ds.validate_validation_settings()
+            ds.load_training_dataset()
+            if ds.validation_from_test:
+                ds.load_test_dataset()
+
+            if not ds.ds_loaded:
+                print(f"✗ Dataset failed to load for seed {seed}. Skipping.")
+                continue
+
+            print(f"Number training images/batches: {ds.num_train_img}/{ds.num_train_batches}")
+            print(f"Number validation images/batches: {ds.num_val_img}/{ds.num_val_batches}")
+
+            # Fresh model for this seed
+            cnn_wrapper = CNN_Model()
+            cnn_wrapper.load_model(device)
+
+            # Determine output directory for this seed
+            if multi_seed:
+                output_dir = parent_dir / f"seed_{seed}"
+            else:
+                output_dir = None  # Train will generate timestamp folder
+
+            # Train
+            train = Train(cnn_wrapper, ds, device, output_dir=output_dir)
             train.train()
-            print("\nTraining finished!")
+
+            print(f">>> Training with seed {seed} finished.")
+
+        print(f"\n{'='*60}")
+        print("All trainings completed.")
+        print(f"{'='*60}")
 
     # Load Weights.
     def _load_weights(self) -> None:

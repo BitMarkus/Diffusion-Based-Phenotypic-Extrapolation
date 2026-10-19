@@ -70,7 +70,6 @@ class AnalysisMenu:
         print("\n:CLASS SORTER:")
         print("  Input: input/ (place images to sort by confidence)")
         print("  Output: output/class_sorter/ (organized by class and confidence)")
-        print("  Note: Selects high-confidence images for LoRA training.")
         print()
 
         confirm = input("Continue? (yes/no): ").strip().lower()

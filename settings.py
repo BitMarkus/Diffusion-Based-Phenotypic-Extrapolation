@@ -18,7 +18,7 @@ setting = {
     ############
 
     # Number of epochs
-    "train_num_epochs": 40, # 40
+    "train_num_epochs": 2, # 40
     # Batch size for training and validation datasets
     "ds_batch_size": 50,
     # Batch size for inference during test evaluation (cross-validation).
@@ -72,15 +72,25 @@ setting = {
     # Dataset parameters:
     # Shuffle dataset
     "ds_shuffle": True,
-    # Shuffle seed
-    "ds_shuffle_seed": 42,
+    # Shuffle seed.
+    # Accepts either an int (single training run) or a list of ints (seed sweep).
+    # A single int is equivalent to a single-element list.
+    # Each seed produces one complete training run, with:
+    #   - fresh model initialization (controlled by cnn_is_pretrained and cnn_initialization)
+    #   - fresh data split (via numpy RNG, used for the shuffle)
+    #   - augmentation randomness unaffected (uses global random/torch state)
+    # Multi-seed sweeps share one parent timestamp folder, with a per-seed subfolder:
+    #   output/train/<timestamp>/seed_<NN>/
+    # Single-seed runs use the standard output folder:
+    #   output/train/<timestamp>/
+    "ds_shuffle_seed": 44,    # [42, 43, 44]
     # How many subprocesses are used to load data in parallel
     "ds_num_workers": 3,
     # Validation split settings
     # Validation split from images in folder data/train/ (False or percentage 0.0-1.0)
     "ds_val_from_train_split": False,    # False
     # Validation split from images in folder data/test/ (False or percentage 0.0-1.0)
-    "ds_val_from_test_split": 0.3,    # 1.0
+    "ds_val_from_test_split": 1.0,    # 1.0/0.3
     # Export validation images to a folder
     "ds_save_val_images": False,
 
@@ -91,12 +101,12 @@ setting = {
     ### PROJECT 1 (CLN7) ###
     # Define classes:
     # 2 classes (WT and KO):
-    # "classes": ["KO", "WT"],
+    "classes": ["KO", "WT"],
     # 9 classes (one for each cell line):
     # "classes": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075", "WT_1618-02", "WT_JG", "WT_JT", "WT_KM", "WT_MS"],
     # Define cell lines (for dataset generator)
-    # "wt_lines": ["WT_1618-02", "WT_JG", "WT_JT", "WT_KM", "WT_MS"],
-    # "ko_lines": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075"],
+    "wt_lines": ["WT_1618-02", "WT_JG", "WT_JT", "WT_KM", "WT_MS"],
+    "ko_lines": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075"],
 
     ### PROJECT 2 (MDD) ###
     # Define classes:
@@ -106,10 +116,10 @@ setting = {
     # codebase and would require systematic changes across nearly every
     # script to rename (see the "Scope and Limitations" chapter in the README).
     # 2 classes (WT and KO):
-    "classes": ["KO", "WT"],
+    # "classes": ["KO", "WT"],
     # Define cell lines (for dataset generator)
-    "wt_lines": ["WT_BJ", "WT_LF", "WT_MP", "WT_MW", "WT_NH"],
-    "ko_lines": ["MMD_155", "MMD_160", "MMD_169", "MMD_177"],
+    # "wt_lines": ["WT_BJ", "WT_LF", "WT_MP", "WT_MW", "WT_NH"],
+    # "ko_lines": ["MMD_155", "MMD_160", "MMD_169", "MMD_177"],
     
     ###############
     # CHECKPOINTS #
@@ -126,19 +136,19 @@ setting = {
     # "both": Uses both methods
     "chckpt_selection_method": "balanced_accuracy",
 
-    # Composite score settings:
-    # Minimum acceptable per-class accuracy (0.60 = 60%)
-    "chckpt_min_class_acc_threshold": 0.65,
-    # Penalty weight for checkpoint selection
-    # Higher = more penalty for class imbalance (range: 1.0 to 4.0)
-    "chckpt_penalty_weight": 2.0,
-
     # Balanced accuracy settings:
     # Minimum acceptable overall balanced accuracy
     "chckpt_min_balanced_acc_threshold": 0.65,
     # Minimum per-class accuracy for balanced accuracy selection
     # Set to 0.0 to disable (use only balanced accuracy threshold)
     "chckpt_min_per_class_acc_balanced": 0.60,
+
+    # Composite score settings:
+    # Minimum acceptable per-class accuracy (0.60 = 60%)
+    "chckpt_min_class_acc_threshold": 0.65,
+    # Penalty weight for checkpoint selection
+    # Higher = more penalty for class imbalance (range: 1.0 to 4.0)
+    "chckpt_penalty_weight": 2.0,
 
     #########################
     # AUTO CROSS VALIDATION #
@@ -157,6 +167,37 @@ setting = {
     # will be skipped automatically. This prevents accidental overwriting
     # when resuming a partial run.
     "cv_skip_existing_folds": True,
+
+    #######################
+    # CONFIDENCE ANALYZER #
+    #######################
+
+    # Min confidence for image sorting
+    "ca_min_conf": 0.8,
+    # Max confidence for image sorting
+    'ca_max_conf': 1.0,
+    # Filter type for image sorting
+    # "correct": Images correctly classified in all test folds, with confidence within [min_conf, max_conf] -> Reliable predictions for downstream analysis
+    # "incorrect": Images incorrectly classified in all test folds, with confidence within [min_conf, max_conf] -> Systematic errors to investigate
+    # "low_confidence": Images with confidence below min_conf in all test folds (ignores max_conf) (regardless of correctness) -> Ambiguous cases needing manual review
+    # "unsure": Images with confidence within [min_conf, max_conf] (regardless of correctness) -> Intermediate-confidence predictions
+    'ca_filter_type': 'correct',
+    # Maximum number of checkpoints which are analyzed for a dataset
+    "ca_max_ckpts": 1,
+    # Method for best checkpoint selection
+    # Options: 'balanced_sum', 'f1_score', 'min_difference', 'balanced_accuracy' and 'composite_score'
+    "ca_ckpt_select_method": 'balanced_accuracy',
+    # Which confusion matrix JSON file to use for checkpoint selection
+    # When you have BOTH validation AND test evaluations during training, this decides which metrics to use for selecting the "best" checkpoint
+    # Options: "validation", "test"
+    "ca_use_test_cm": "validation",
+    # Which set of images to run predictions on for confidence analysis
+    # Decides which actual images to feed through the model for prediction
+    # Options: "validation", "test", "all"
+    "ca_split_to_use": "all",
+    # Rename filtered images with the average confidence in the filename
+    # If False, images keep their original filenames
+    "ca_rename_with_confidence": False,
 
     #################
     # AUGMENTATIONS #
@@ -279,7 +320,7 @@ setting = {
     # Batch size for prediction
     "sort_pred_batch_size": 100,
     # Interval borders for confidence statistics
-    "sort_conf_intervals": [10, 20, 30, 40, 50, 60, 70, 80, 90],
+    "sort_conf_intervals": [5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 95],
     # Interval borders for logit statistics
     "sort_logit_intervals": [-10, -5, -2, 0, 2, 5, 10],
 
@@ -291,37 +332,6 @@ setting = {
     'analyze_rename_with_confidence': False,
     # Include logits in filenames
     'analyze_include_logits_in_rename': False,
-
-    #######################
-    # CONFIDENCE ANALYZER #
-    #######################
-
-    # Min confidence for image sorting
-    "ca_min_conf": 0.8,
-    # Max confidence for image sorting
-    'ca_max_conf': 1.0,
-    # Filter type for image sorting
-    # "correct": Images correctly classified in all test folds, with confidence within [min_conf, max_conf] -> Reliable predictions for downstream analysis
-    # "incorrect": Images incorrectly classified in all test folds, with confidence within [min_conf, max_conf] -> Systematic errors to investigate
-    # "low_confidence": Images with confidence below min_conf in all test folds (ignores max_conf) (regardless of correctness) -> Ambiguous cases needing manual review
-    # "unsure": Images with confidence within [min_conf, max_conf] (regardless of correctness) -> Intermediate-confidence predictions
-    'ca_filter_type': 'correct',
-    # Maximum number of checkpoints which are analyzed for a dataset
-    "ca_max_ckpts": 1,
-    # Method for best checkpoint selection
-    # Options: 'balanced_sum', 'f1_score', 'min_difference', 'balanced_accuracy' and 'composite_score'
-    "ca_ckpt_select_method": 'balanced_accuracy',
-    # Which confusion matrix JSON file to use for checkpoint selection
-    # When you have BOTH validation AND test evaluations during training, this decides which metrics to use for selecting the "best" checkpoint
-    # Options: "validation", "test"
-    "ca_use_test_cm": "validation",
-    # Which set of images to run predictions on for confidence analysis
-    # Decides which actual images to feed through the model for prediction
-    # Options: "validation", "test", "all"
-    "ca_split_to_use": "all",
-    # Rename filtered images with the average confidence in the filename
-    # If False, images keep their original filenames
-    "ca_rename_with_confidence": False,
 
     ###########
     # GradCAM #
@@ -760,11 +770,11 @@ setting = {
 
     # ===== OUTPUT FORMAT =====
     # Output format: 'png', 'tiff', 'svg', 'pdf'
-    "export_cm_format": "tiff",
+    "export_cm_format": "png",
     # Resolution for raster formats (PNG, TIFF)
     # 300: Minimum for presentations
     # 600: Recommended for print publications
-    "export_cm_dpi": 600,
+    "export_cm_dpi": 300,
     # ===== MATRIX CONTENT =====
     # Normalization mode for the confusion matrix
     # 'rows': Row-normalized (shows recall/TPR per class)
@@ -851,7 +861,7 @@ setting = {
     # Show/hide plot title
     # True: Shows title with overall accuracy
     # False: No title (cleaner)
-    "export_cm_show_title": True,
+    "export_cm_show_title": False,
     # Show/hide axis labels
     # True: Shows "Predicted Class" and "True Class"
     # False: No axis labels (cleaner)
@@ -884,11 +894,11 @@ setting = {
     "export_cm_master_font_size": None,
     # Individual font sizes (only used when master_font_size is None)
     # All sizes are in points (1/72 inch)
-    "export_cm_axis_label_size": 30,           # Size for axis labels (xlabel, ylabel)
-    "export_cm_title_font_size": 30,           # Size for plot title
+    "export_cm_axis_label_size": 25,           # Size for axis labels (xlabel, ylabel)
+    "export_cm_title_font_size": 25,           # Size for plot title
     "export_cm_tick_label_size": 25,           # Size for tick labels (class names)
-    "export_cm_annotation_font_size": 16,      # Size for numbers inside matrix cells
-    "export_cm_legend_font_size": 30,          # Size for colorbar label
+    "export_cm_annotation_font_size": 25,      # Size for numbers inside matrix cells (16 for 9cl cm)
+    "export_cm_legend_font_size": 25,          # Size for colorbar label
 
     #########
     # PATHS #

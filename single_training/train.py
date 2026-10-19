@@ -46,7 +46,8 @@ class Train():
     #   dataset (Dataset): Dataset handler with train/val loaders
     #   device (torch.device): Device to run training on
     #   dataset_idx (int, optional): Index for cross-validation dataset naming
-    def __init__(self, cnn_wrapper, dataset, device: torch.device, dataset_idx: int = None) -> None:
+    #   output_dir (Path, optional): Directory for saving training results
+    def __init__(self, cnn_wrapper, dataset, device: torch.device, dataset_idx: int = None, output_dir: Path = None) -> None:
         
         # Input validation
         assert len(dataset.ds_train) > 0, "Training dataset is empty"
@@ -58,7 +59,7 @@ class Train():
         self.dataset_idx = dataset_idx
         self.writer = None
 
-        # Generate timestamp for this training run
+        # Generate output directory for this training run
         if self.dataset_idx is not None:
             # Cross-validation: use dataset index as folder name
             self.timestamp = f"ds{self.dataset_idx:02d}"
@@ -68,6 +69,27 @@ class Train():
             self.plot_dir = None
             self.log_dir = None
             self.prob_dir = None
+
+        elif output_dir is not None:
+            # Caller-provided output directory (e.g., seed sweep):
+            # use it as-is, no timestamp generation.
+            self.train_output_dir = Path(output_dir)
+            self.timestamp = self.train_output_dir.name
+            self.train_output_dir.mkdir(parents=True, exist_ok=True)
+
+            self.checkpoint_dir = self.train_output_dir / "checkpoints"
+            self.checkpoint_dir.mkdir(exist_ok=True)
+            self.plot_dir = self.train_output_dir / "plots"
+            self.plot_dir.mkdir(exist_ok=True)
+            self.log_dir = self.train_output_dir / "logs"
+            self.log_dir.mkdir(exist_ok=True)
+            self.prob_dir = self.log_dir / "probabilities"
+            self.prob_dir.mkdir(parents=True, exist_ok=True)
+
+            self._copy_settings_file(self.train_output_dir)
+
+            print(f"📁 Training results will be saved to: {self.train_output_dir}")
+
         else:
             # Single training: create timestamped folder in output/train/
             self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

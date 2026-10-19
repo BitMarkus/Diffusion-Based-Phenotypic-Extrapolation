@@ -383,6 +383,10 @@ The number of classes and their folder names must match the `classes` list in `s
 
 **Description**: Runs the training loop with the configured optimizer, learning rate scheduler, loss function, and mixed-precision acceleration. After each epoch, validation is performed and checkpoints are saved based on the selected checkpoint criterion.
 
+Training is **fully automated**: the module builds a fresh `Dataset` and `CNN_Model` internally for each training run, so it is not necessary to use **1 → 1 (Create CNN Network)** or **1 → 3 (Load Training Data)** beforehand. This ensures that every run starts from a clean state, with no carried-over weights or dataset splits from previous runs.
+
+The training action supports **multi-seed sweeps** via the `ds_shuffle_seed` setting. If a single integer is provided, one training run is performed. If a list of integers is provided, one full training run is performed **per seed**, each with a freshly initialized model and a freshly shuffled train/validation split.
+
 #### Key Settings (from `settings.py`)
 
 | Setting | Type | Description | Example Value |
@@ -395,6 +399,26 @@ The number of classes and their folder names must match the `classes` list in `s
 | `train_lr_eta_min` | float | Minimum LR for cosine annealing | `1e-5` |
 | `train_use_weighted_loss` | bool | Weight loss by inverse class frequency | `True` |
 | `train_label_smoothing` | float | Label smoothing factor | `0.1` |
+| `ds_shuffle_seed` | int or list | Single seed (one run) or list of seeds (one run each) | `44` or `[42, 43, 44]` |
+
+#### Seed Configuration
+
+The `ds_shuffle_seed` setting controls both the number of training runs and the train/validation split of each run.
+
+| Value | Behavior | Output Directory |
+|-------|----------|------------------|
+| `44` (int) | Single training run | `output/train/<timestamp>/` |
+| `[42, 43, 44]` (list) | Three independent training runs, one per seed | `output/train/<parent_timestamp>/seed_42/`, `seed_43/`, `seed_44/` |
+
+For a single seed (int), the behavior is identical to a one-element list. A single-element list such as `[44]` is treated as a single run and uses the standard timestamp folder, not the seed-sweep layout.
+
+**What is re-seeded per run and what is not:**
+
+- **Model weights** — a fresh `CNN_Model` is created and loaded for each seed. The initial weights are identical across seeds unless `cnn_is_pretrained = False` and the initialization RNG differs.
+- **Train/validation split** — the shuffle applied before the validation split uses `numpy.random.seed(seed)`, so the split composition differs between seeds.
+- **Augmentation randomness** — `random` and `torch` RNG state are intentionally **not** re-seeded per run. Augmentation randomness is therefore independent of the sweep seed, matching the behavior of the original single-run pipeline.
+
+This means a seed sweep produces multiple runs that differ in **data split** (and, for scratch models, weight initialization), while augmentation randomness remains comparable across runs.
 
 #### Checkpoint Selection Settings
 
@@ -413,45 +437,62 @@ The number of classes and their folder names must match the `classes` list in `s
 - **`composite_score`**: Uses `overall_accuracy − penalty_weight × std(class_accuracies)`. More stringent against class imbalance.
 - **`both`**: Triggers a save whenever *either* metric improves.
 
-#### Training Pipeline
+#### Training Pipeline (per seed)
 
 ```plaintext
-1. Warmup Phase (Linear LR)
-   └── 5 epochs @ 1% → 100% of target LR
+1. Fresh Dataset() and CNN_Model() created
+   - Dataset seeded with the current ds_shuffle_seed value
+   - Model loaded via cnn_wrapper.load_model(device)
 
-2. Main Training (Cosine Annealing)
-   └── remaining epochs with LR decay to eta_min
+2. Data loading
+   - Train/val split determined by ds_val_from_train_split / ds_val_from_test_split
+   - Augmentations applied if train_use_augment = True
 
-3. Mixed Precision
-   └── Automatic FP16/FP32 selection via GradScaler
+3. Warmup Phase (Linear LR)
+   - train_lr_warmup_epochs epochs @ 1% -> 100% of target LR
 
-4. Gradient Clipping
-   └── max_norm = 1.0
+4. Main Training (Cosine Annealing)
+   - remaining epochs with LR decay to train_lr_eta_min
+
+5. Mixed Precision
+   - Automatic FP16/FP32 selection via GradScaler
+
+6. Gradient Clipping
+   - max_norm = 1.0
 ```
 
 #### Output
 
-After training, results are stored under:
+For a single-seed run (int or one-element list):
 
 ```plaintext
 output/train/[timestamp]/
-├── checkpoints/             # Saved .pt files
-├── plots/                   # Metrics, confusion matrices, ROC/PR data
-├── logs/                    # TensorBoard event files
-│   └── probabilities/       # Per-epoch probabilities (.npz + .json)
-├── settings_copy.py         # Snapshot of settings.py
-└── training_examples.png    # Image grid from the training set
+|-- checkpoints/             # Saved .pt files
+|-- plots/                   # Metrics, confusion matrices, ROC/PR data
+|-- logs/                    # TensorBoard event files
+|   `-- probabilities/       # Per-epoch probabilities (.npz + .json)
+|-- settings_copy.py         # Snapshot of settings.py
+`-- training_examples.png    # Image grid from the training set
 ```
 
-#### TensorBoard
+For a multi-seed sweep (list with two or more entries):
 
-To visualize training progress, launch TensorBoard from the project root:
-
-```bash
-python -m tensorboard.main --logdir "output/train/[timestamp]/logs"
+```plaintext
+output/train/[parent_timestamp]/
+|-- seed_42/
+|   |-- checkpoints/
+|   |-- plots/
+|   |-- logs/
+|   |   `-- probabilities/
+|   |-- settings_copy.py
+|   `-- training_examples.png
+|-- seed_43/
+|   `-- ...                  # Same structure as seed_42
+`-- seed_44/
+    `-- ...
 ```
 
-Then open the printed URL in your browser (usually `http://localhost:6006`). TensorBoard displays loss curves, accuracy, per-class metrics, ROC curves, and confusion matrices.
+Each seed produces a fully self-contained result folder. All downstream tooling (TensorBoard, export, analysis) works identically on the per-seed folders.
 
 #### Checkpoint Naming Convention
 
@@ -470,31 +511,101 @@ ckpt_{pretrained}_{arch}_e{epoch}_bal{balanced_acc}_comp{composite_score}{datase
 
 **Example:** `ckpt_pretr_densenet121_e23_bal0.860_comp0.812.pt`
 
-#### Example Workflow
+#### Example Workflow - Single Run
 
 1. Configure `settings.py`:
-   ```python
-   train_num_epochs = 40
-   chckpt_selection_method = "balanced_accuracy"
-   chckpt_min_balanced_acc_threshold = 0.65
-   chckpt_min_per_class_acc_balanced = 0.60
-   ```
 
-2. Run the program and select **1 → 4**:
-   ```plaintext
-   :TRAIN NETWORK:
-     Results will be saved to output/train/[timestamp]/
-   Start training...
+```python
+ds_shuffle_seed = 44
+train_num_epochs = 40
+chckpt_selection_method = "balanced_accuracy"
+chckpt_min_balanced_acc_threshold = 0.65
+chckpt_min_per_class_acc_balanced = 0.60
+```
 
-   >> Epoch [1/40]:
-   Train: 100%|████████| 175/175 [02:15<00:00]
-   > Train Loss: 0.583 | Weighted Train Acc: 0.712 | Learning Rate: 0.000020
-   Valid: 100%|████████| 62/62 [00:23<00:00]
-   > Val Loss: 0.412 | Weighted Val Acc: 0.781 | Per-class: (0.79 KO | 0.77 WT)
-   > Balanced Accuracy: 0.781 | Composite Score: 0.764
-   > Class STD: 0.008 | Min Class Acc: 77.3%
-   ✓ Model saved! Epoch 1
-   ```
+2. Run the program and select **1 -> 4**:
+
+```plaintext
+:TRAIN NETWORK:
+  Seed: 44
+  Mode: single training
+  Results will be saved to: output/train/<timestamp>/
+
+============================================================
+>>> TRAINING WITH SEED 44
+============================================================
+Number training images/batches: 8750/175
+Number validation images/batches: 3100/62
+Start training...
+
+>> Epoch [1/40]:
+Train: 100% [====================] 175/175 [02:15<00:00]
+> Train Loss: 0.583 | Weighted Train Acc: 0.712 | Learning Rate: 0.000020
+Valid: 100% [====================] 62/62 [00:23<00:00]
+> Val Loss: 0.412 | Weighted Val Acc: 0.781 | Per-class: (0.79 KO | 0.77 WT)
+> Balanced Accuracy: 0.781 | Composite Score: 0.764
+> Class STD: 0.008 | Min Class Acc: 77.3%
+Model saved! Epoch 1
+...
+>>> Training with seed 44 finished.
+============================================================
+All trainings completed.
+============================================================
+```
+
+#### Example Workflow - Multi-Seed Sweep
+
+1. Configure `settings.py`:
+
+```python
+ds_shuffle_seed = [42, 43, 44]
+train_num_epochs = 40
+chckpt_selection_method = "balanced_accuracy"
+```
+
+2. Run the program and select **1 -> 4**:
+
+```plaintext
+:TRAIN NETWORK:
+  Seeds: [42, 43, 44]
+  Mode: multi-seed sweep (3 runs)
+  Results will be saved to: output/train/<parent_timestamp>/
+
+============================================================
+>>> TRAINING WITH SEED 42
+============================================================
+Number training images/batches: 8750/175
+Number validation images/batches: 3100/62
+...
+>>> Training with seed 42 finished.
+
+============================================================
+>>> TRAINING WITH SEED 43
+============================================================
+...
+>>> Training with seed 43 finished.
+
+============================================================
+>>> TRAINING WITH SEED 44
+============================================================
+...
+>>> Training with seed 44 finished.
+
+============================================================
+All trainings completed.
+============================================================
+```
+
+The resulting folder layout is:
+
+```plaintext
+output/train/<parent_timestamp>/
+|-- seed_42/
+|-- seed_43/
+`-- seed_44/
+```
+
+Each `seed_XX/` folder contains its own `checkpoints/`, `plots/`, `logs/`, `settings_copy.py`, and `training_examples.png`, and can be analyzed or exported independently.
 
 ---
 

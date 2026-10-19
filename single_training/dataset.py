@@ -35,8 +35,21 @@ class Dataset():
         # Settings variables
         # Shuffle training images before validation split
         self.shuffle = setting["ds_shuffle"]
-        # Shuffle seed
-        self.shuffle_seed = setting["ds_shuffle_seed"]
+        # Shuffle seed(s).
+        # Normalized to a list so downstream code can iterate uniformly.
+        # The first seed is used as the "active" seed until set_shuffle_seed() is called.
+        raw_seed = setting["ds_shuffle_seed"]
+        if isinstance(raw_seed, int):
+            self.shuffle_seed_list = [raw_seed]
+        elif isinstance(raw_seed, (list, tuple)):
+            self.shuffle_seed_list = [int(s) for s in raw_seed]
+        else:
+            raise ValueError(
+                f"ds_shuffle_seed must be an int or a list of ints, got {type(raw_seed).__name__}"
+            )
+        if not self.shuffle_seed_list:
+            raise ValueError("ds_shuffle_seed list is empty; at least one seed is required")
+        self.shuffle_seed = self.shuffle_seed_list[0]
         # Batch size for training and validation datasets (for 512x512 -> 24)
         self.batch_size = setting["ds_batch_size"]
         # Batch size for inference (test evaluation during cross-validation)
@@ -306,6 +319,11 @@ class Dataset():
     # Returns:
     #   bool: True if successful, False otherwise
     def load_training_dataset(self) -> bool:
+        # Seed numpy so the train/val split shuffle is reproducible for this seed.
+        # random and torch are intentionally NOT seeded here, so that augmentation
+        # randomness is independent of the sweep seed.
+        np.random.seed(self.shuffle_seed)
+
         if self.train_use_augment:
             train_transformer = self.get_transformer_train()
         else:
@@ -571,6 +589,12 @@ class Dataset():
 
         print(f"✓ Exported {copied_count} validation images to: {output_path}")
         return True
+
+    # Set the active shuffle seed for the next load_training_dataset() call.
+    # Args:
+    #   seed (int): Seed to use
+    def set_shuffle_seed(self, seed: int) -> None:
+        self.shuffle_seed = int(seed)
 
     #############################################################################################################
     # SYNTHETIC IMAGE HANDLING
