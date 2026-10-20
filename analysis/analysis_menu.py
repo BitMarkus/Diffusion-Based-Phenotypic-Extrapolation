@@ -4,7 +4,7 @@
 
 # ===== Own Modules =====
 import functions as fn
-from . import ClassAnalyzer, GradCAMAnalyzer, ClassSorter, FIDCalculator, DimRed
+from . import ClassAnalyzer, GradCAMAnalyzer, ClassSorter, FIDCalculator
 
 class AnalysisMenu:
 
@@ -121,6 +121,9 @@ class AnalysisMenu:
             return
 
         try:
+            # Lazy import: UMAP / numba take several seconds to load. Only paid
+            # when the user actually selects this action, not on menu entry.
+            from . import DimRed
             dimred = DimRed(device)
             dimred()
         except Exception as e:

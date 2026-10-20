@@ -26,6 +26,7 @@ setting = {
     # different memory profiles and different throughput requirements.
     # Batch size does not affect the predictions themselves — only speed
     # and peak memory usage.
+    # See table at the end of this page
     "ds_batch_size_pred": 100,
 
     # Optimizer:
