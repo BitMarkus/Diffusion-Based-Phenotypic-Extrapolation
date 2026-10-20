@@ -203,24 +203,37 @@ class TensorBoardExporter:
 
         crossval_count = 0
         timestamp_count = 0
+        seed_count = 0
 
         for run_path, run_name, _ in runs:
             if self._is_cross_validation_run(run_name):
                 crossval_count += 1
             elif self._is_timestamp_run(run_name):
                 timestamp_count += 1
+            elif self._is_seed_run(run_name):
+                seed_count += 1
 
-        if crossval_count > 0 and timestamp_count == 0:
+        # Seed sweeps are a subtype of single training: they live under a
+        # timestamp parent folder and produce one result folder per seed.
+        single_count = timestamp_count + seed_count
+
+        if crossval_count > 0 and single_count == 0:
             print(f"✓ Auto-detected: CROSS-VALIDATION mode ({crossval_count} dsXX folders)")
             return 'crossval'
 
-        if timestamp_count > 0 and crossval_count == 0:
-            print(f"✓ Auto-detected: SINGLE TRAINING mode ({timestamp_count} timestamp folders)")
+        if single_count > 0 and crossval_count == 0:
+            if seed_count > 0 and timestamp_count == 0:
+                print(f"✓ Auto-detected: SINGLE TRAINING mode (seed sweep, {seed_count} seed folders)")
+            elif seed_count > 0 and timestamp_count > 0:
+                print(f"✓ Auto-detected: SINGLE TRAINING mode "
+                    f"({timestamp_count} timestamp, {seed_count} seed folders)")
+            else:
+                print(f"✓ Auto-detected: SINGLE TRAINING mode ({timestamp_count} timestamp folders)")
             return 'single'
 
-        if crossval_count > 0 and timestamp_count > 0:
+        if crossval_count > 0 and single_count > 0:
             print("⚠ Mixed run types detected! Using CROSS-VALIDATION mode as default.")
-            print(f"   ({crossval_count} dsXX, {timestamp_count} timestamp)")
+            print(f"   ({crossval_count} dsXX, {timestamp_count} timestamp, {seed_count} seed)")
             return 'crossval'
 
         print("⚠ Could not determine run type. Using CROSS-VALIDATION mode as default.")
@@ -237,6 +250,10 @@ class TensorBoardExporter:
             return run_name
 
         if self._is_timestamp_run(run_name):
+            return run_name[:31]
+
+        # Preserve seed_XX names so each seed gets its own Excel sheet name.
+        if self._is_seed_run(run_name):
             return run_name[:31]
 
         return "training_run"
@@ -292,6 +309,12 @@ class TensorBoardExporter:
         prob_subdir = self.logdir / "probabilities"
         if prob_subdir.exists():
             return prob_subdir
+
+        # Seed-sweep layout: <parent>/seed_XX/logs/probabilities/
+        if run_name and self._is_seed_run(run_name):
+            seed_prob = self.logdir / run_name / "logs" / "probabilities"
+            if seed_prob.exists():
+                return seed_prob
 
         if run_name and self.logdir.name != run_name:
             prob_subdir = self.logdir / run_name / "probabilities"
@@ -1140,3 +1163,11 @@ class TensorBoardExporter:
             selection = 'balanced_accuracy'
 
         return selection
+
+    # Check whether a run folder name matches the seed-sweep pattern (seed_<int>).
+    # Args:
+    #   run_name (str): Run folder name
+    # Returns:
+    #   bool: True if the name matches the seed-sweep pattern
+    def _is_seed_run(self, run_name: str) -> bool:
+        return bool(re.match(r'^seed_\d+$', run_name))
