@@ -85,15 +85,48 @@ setting = {
     # Single-seed runs use the standard output folder:
     #   output/train/<timestamp>/
     "ds_shuffle_seed": [42, 43, 44],    # [42, 43, 44]
+
     # How many subprocesses are used to load data in parallel
     "ds_num_workers": 3,
+
     # Validation split settings
-    # Validation split from images in folder data/train/ (False or percentage 0.0-1.0)
+    # ---------------------------------------------------------------------------
+    # The pipeline has no dedicated validation folder. Validation images are
+    # carved from ONE of the two existing folders. Set exactly one of the
+    # following to a float in (0.0, 1.0]; the other must be False.
+    #
+    #   ds_val_from_train_split  -> val from data/train/ (rest of train = training)
+    #                               data/test/ is used in full for test evaluation
+    #   ds_val_from_test_split   -> val from data/test/  (data/train/ used in full)
+    #                               data/test/ remainder (1 - split) = test images
+    #
+    # Setting BOTH does NOT produce a train/val/test three-way split. The code
+    # warns and falls back to the train-based split. Setting BOTH to False also
+    # warns and falls back to 0.1 from data/train/.
+    #
+    # Note on ds_val_from_test_split = 1.0: ALL of data/test/ becomes validation
+    # and nothing remains for test evaluation. This is NOT an error — the run
+    # completes normally, test evaluation is simply skipped. Use a value
+    # strictly between 0.0 and 1.0 (e.g. 0.3) if you want a held-out test set.
+    #
+    # Which images went where: each training run writes a split_info.json into
+    # its own output folder (output/train/<timestamp>/ for single-seed runs,
+    # output/train/<parent>/seed_XX/ for seed sweeps). The file lists filenames
+    # grouped by class for train, val, and test, mirroring the layout of the
+    # cross-validation split_info.json (see output/cross_validation/dataset_XX/).
+    #
+    # ATTENTION: single training has NO dedicated test evaluation at the end of
+    # training. The model is only evaluated on the validation split, and a
+    # checkpoint is saved whenever the selected criterion improves. To evaluate
+    # a trained model on the test set (or on any new images), use the Analysis
+    # menu: "1) Predict Class from Input Folder" (Section 3.1 of the README).
+    # That action loads a saved checkpoint from checkpoints/ and classifies all
+    # images in input/, producing a per-folder report. Cross-validation
+    # (Section 2.2 of the README) is the only pipeline that performs automatic
+    # test evaluation as part of its own run.
+    # ---------------------------------------------------------------------------
     "ds_val_from_train_split": False,    # False
-    # Validation split from images in folder data/test/ (False or percentage 0.0-1.0)
     "ds_val_from_test_split": 1.0,    # 1.0/0.3
-    # Export validation images to a folder
-    "ds_save_val_images": False,
 
     ##########################
     # CLASSES AND CELL LINES #

@@ -124,6 +124,7 @@ class Train():
         # Datasets
         self.ds_train = dataset.ds_train
         self.ds_val = dataset.ds_val
+        self.dataset = dataset 
         self.num_train_img = dataset.num_train_img
         self.num_val_img = dataset.num_val_img
         self.num_train_batches = dataset.num_train_batches
@@ -767,6 +768,13 @@ class Train():
         # For single training: save training examples
         if self.dataset_idx is None:
             self._save_training_examples(self.plot_dir)
+
+        # For single training: record which images went into train/val/test.
+        # Cross-validation writes its own split_info.json per fold in
+        # AutoCrossValidation._record_val_test_split, so we skip it here
+        # to avoid overwriting that file with a different schema.
+        if self.dataset_idx is None and hasattr(self.dataset, 'save_split_info'):
+            self.dataset.save_split_info(self.train_output_dir)
 
         # Initialize metrics storage
         history = {

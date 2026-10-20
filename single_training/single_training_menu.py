@@ -82,13 +82,6 @@ class SingleTrainingMenu:
             self.ds.load_test_dataset()
         self.ds.print_dataset_info()
 
-        if setting.get('ds_save_val_images', False):
-            print("Exporting validation images. Please wait....")
-            val_img_export_pth = setting['pth_ds_gen_output'] / "validation_images"
-            if not val_img_export_pth.exists():
-                val_img_export_pth.mkdir(parents=True, exist_ok=True)
-            self.ds.export_validation_images(val_img_export_pth)
-
         if self.ds.ds_loaded:
             print("Training and validation datasets successfully loaded.")
             print(f"Number training images/batches: {self.ds.num_train_img}/{self.ds.num_train_batches}")

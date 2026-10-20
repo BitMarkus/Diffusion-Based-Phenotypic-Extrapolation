@@ -318,7 +318,6 @@ During training, only the training set is used for gradient updates, while the v
 | `ds_shuffle_seed` | int | Random seed for reproducibility | `44` |
 | `ds_num_workers` | int | Parallel data-loading subprocesses | `3` |
 | `train_use_augment` | bool | Enable augmentations during training | `True` |
-| `ds_save_val_images` | bool | Export validation images to a folder | `False` |
 
 #### Validation Split Modes
 
@@ -330,6 +329,56 @@ Exactly one of the two split settings should be active (not `False`) at a time:
 | **Split from test** | `False` | `0.0 – 1.0` | Training uses all of `data/train/`; validation and test images come from `data/test/` |
 
 If both are set, the training split takes precedence and a warning is printed. If neither is set, a default of `0.1` from train is used.
+
+#### Split Tracking with `split_info.json`
+
+Every training run writes a `split_info.json` file into its own output folder. The file records exactly which images were used for training, validation, and test evaluation in that run, so the split can be reconstructed later without re-loading the data or copying image files.
+
+The file is written **before** the first epoch, so it exists even if training is interrupted. For a multi-seed sweep, each seed gets its own `split_info.json` inside its own `seed_XX/` folder, so the files do not mix.
+
+**Location:**
+
+```plaintext
+output/train/<timestamp>/split_info.json                   # single-seed run
+output/train/<parent_timestamp>/seed_42/split_info.json    # seed sweep, per seed
+output/train/<parent_timestamp>/seed_43/split_info.json
+...
+```
+
+**Format:**
+
+The file is structured to mirror the cross-validation `split_info.json` (Section 2.2), with one addition — a `train` section — because single training writes the file per run rather than per fold.
+
+```json
+{
+  "mode": "single",
+  "seed": 43,
+  "val_source": "test",
+  "val_split": 0.3,
+  "train": { "KO": ["img_0100.png", "..."], "WT": ["img_0001.png", "..."] },
+  "val":   { "KO": ["img_0150.png", "..."], "WT": ["img_0050.png", "..."] },
+  "test":  { "KO": ["img_0200.png", "..."], "WT": ["img_0300.png", "..."] },
+  "counts": { "train": 8750, "val": 930, "test": 2170 }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `mode` | Always `"single"` for this file (cross-validation writes its own per-fold file without this field) |
+| `seed` | The `ds_shuffle_seed` used for this run |
+| `val_source` | `"train"` or `"test"` — which setting was active (`ds_val_from_train_split` or `ds_val_from_test_split`) |
+| `val_split` | The float value used for the split (e.g. `0.3`) |
+| `train` / `val` / `test` | Filenames grouped by class. Filenames only (no full paths), so the file is portable between machines and working directories. |
+| `counts` | Per-split totals, useful for a quick sanity check |
+
+**When a split is empty:**
+
+- If `ds_val_from_test_split = 1.0`, the `test` section is empty (`{"KO": [], "WT": []}`, `counts.test = 0`) because all of `data/test/` was consumed by validation. Test evaluation is skipped — this is not an error.
+- If neither split setting is active and the code falls back to `ds_val_from_train_split = 0.1` (see the warning in the table above), the `val_source` field will report `"train"`.
+
+**No automatic test evaluation in single training:**
+
+Single training does **not** perform a dedicated test evaluation at the end of the run. The model is only evaluated on the validation split, and a checkpoint is saved whenever the selected checkpoint criterion improves. To evaluate a trained model on the test set (or on any new images), use the Analysis menu action **3 → 1 Predict Class from Input Folder** (Section 3.1). That action loads a saved checkpoint from `checkpoints/` and classifies all images in `input/`. The only pipeline that performs automatic test evaluation as part of its own run is **Automatic Cross Validation** (Section 2.2).
 
 #### Required Folder Structure
 
@@ -467,29 +516,31 @@ For a single-seed run (int or one-element list):
 
 ```plaintext
 output/train/[timestamp]/
-|-- checkpoints/             # Saved .pt files
-|-- plots/                   # Metrics, confusion matrices, ROC/PR data
-|-- logs/                    # TensorBoard event files
-|   `-- probabilities/       # Per-epoch probabilities (.npz + .json)
-|-- settings_copy.py         # Snapshot of settings.py
-`-- training_examples.png    # Image grid from the training set
+├── checkpoints/             # Saved .pt files
+├── plots/                   # Metrics, confusion matrices, ROC/PR data
+├── logs/                    # TensorBoard event files
+│   └── probabilities/       # Per-epoch probabilities (.npz + .json)
+├── split_info.json          # Train/val/test filenames per class
+├── settings_copy.py         # Snapshot of settings.py
+└── training_examples.png    # Image grid from the training set
 ```
 
 For a multi-seed sweep (list with two or more entries):
 
 ```plaintext
 output/train/[parent_timestamp]/
-|-- seed_42/
-|   |-- checkpoints/
-|   |-- plots/
-|   |-- logs/
-|   |   `-- probabilities/
-|   |-- settings_copy.py
-|   `-- training_examples.png
-|-- seed_43/
-|   `-- ...                  # Same structure as seed_42
-`-- seed_44/
-    `-- ...
+├── seed_42/
+│   ├── checkpoints/
+│   ├── plots/
+│   ├── logs/
+│   │   └── probabilities/
+│   ├── split_info.json      # Split used for this seed
+│   ├── settings_copy.py
+│   └── training_examples.png
+├── seed_43/
+│   └── ...                  # Same structure as seed_42
+└── seed_44/
+    └── ...
 ```
 
 Each seed produces a fully self-contained result folder. All downstream tooling (TensorBoard, export, analysis) works identically on the per-seed folders.
@@ -524,6 +575,8 @@ chckpt_min_per_class_acc_balanced = 0.60
 ```
 
 2. Run the program and select **1 -> 4**:
+
+Each seed's `split_info.json` records the exact train/validation/test split used for that seed. Because the split is determined by `numpy.random.seed(seed)` (see the "What is re-seeded per run" table above), the splits differ between seeds, and the three `split_info.json` files can be diffed to confirm that the seeds actually produced different splits.
 
 ```plaintext
 :TRAIN NETWORK:
@@ -932,6 +985,8 @@ Example structure of the file:
 ```
 
 The `metadata` block makes the filtering transparent: the user can see how many synthetic images were removed and how many real images remained for evaluation.
+
+Single training runs (Section 1.4) write a `split_info.json` in the same format but with an additional `train` section; see Section 1.3 → "Split Tracking with `split_info.json`" for details. The two file types are structurally compatible, so the same reader can handle both.
 
 #### Example Workflow
 

@@ -650,3 +650,77 @@ class Dataset():
         )
 
         return True
+
+    # Save a split_info.json file describing which images were used for
+    # training, validation, and test evaluation in this run.
+    # The format mirrors the cross-validation split_info.json (Section 2.2
+    # of the README): filenames only, grouped by class, no full paths, so the
+    # file is portable between machines and working directories.
+    # Args:
+    #   output_dir (Path): Directory to write split_info.json into
+    #                      (the run's own output folder)
+    def save_split_info(self, output_dir: Path) -> None:
+        import json
+
+        def _names_by_class(loader):
+            result = {cls: [] for cls in self.classes}
+            if loader is None:
+                return {cls: [] for cls in self.classes}
+
+            ds = loader.dataset
+            if hasattr(ds, 'dataset'):
+                # Subset wrapper (SubsetRandomSampler over ImageFolder)
+                samples = ds.dataset.samples
+                classes = ds.dataset.classes
+                idxs = loader.sampler.indices
+            else:
+                # Direct ImageFolder
+                samples = ds.samples
+                classes = ds.classes
+                if hasattr(loader, 'sampler') and hasattr(loader.sampler, 'indices'):
+                    idxs = loader.sampler.indices
+                else:
+                    idxs = list(range(len(samples)))
+
+            for i in idxs:
+                filename = Path(samples[i][0]).name
+                class_name = classes[samples[i][1]]
+                if class_name in result:
+                    result[class_name].append(filename)
+
+            return {cls: sorted(set(v)) for cls, v in result.items()}
+
+        info = {
+            'mode': 'single',
+            'seed': self.shuffle_seed,
+            'val_source': (
+                'test' if self.val_from_test_split is not False else 'train'
+            ),
+            'val_split': (
+                self.val_from_test_split if self.val_from_test_split is not False
+                else self.val_from_train_split
+            ),
+            'train': _names_by_class(self.ds_train),
+            'val': _names_by_class(self.ds_val),
+            'test': _names_by_class(getattr(self, 'ds_test_for_test', None)),
+        }
+
+        info['counts'] = {
+            'train': sum(len(v) for v in info['train'].values()),
+            'val': sum(len(v) for v in info['val'].values()),
+            'test': sum(len(v) for v in info['test'].values()),
+        }
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_path = output_dir / 'split_info.json'
+        with open(out_path, 'w') as f:
+            json.dump(info, f, indent=2)
+
+        print(f"✓ Split info saved to: {out_path}")
+        print(f"  train: {info['counts']['train']} images "
+            f"({', '.join(f'{k}={len(v)}' for k, v in info['train'].items())})")
+        print(f"  val:   {info['counts']['val']} images "
+            f"({', '.join(f'{k}={len(v)}' for k, v in info['val'].items())})")
+        print(f"  test:  {info['counts']['test']} images "
+            f"({', '.join(f'{k}={len(v)}' for k, v in info['test'].items())})")
