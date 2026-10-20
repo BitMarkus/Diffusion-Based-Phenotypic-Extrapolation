@@ -18,7 +18,7 @@ setting = {
     ############
 
     # Number of epochs
-    "train_num_epochs": 2, # 40
+    "train_num_epochs": 40, # 40
     # Batch size for training and validation datasets
     "ds_batch_size": 50,
     # Batch size for inference during test evaluation (cross-validation).
@@ -83,7 +83,7 @@ setting = {
     #   output/train/<timestamp>/seed_<NN>/
     # Single-seed runs use the standard output folder:
     #   output/train/<timestamp>/
-    "ds_shuffle_seed": 44,    # [42, 43, 44]
+    "ds_shuffle_seed": [42, 43, 44],    # [42, 43, 44]
     # How many subprocesses are used to load data in parallel
     "ds_num_workers": 3,
     # Validation split settings
