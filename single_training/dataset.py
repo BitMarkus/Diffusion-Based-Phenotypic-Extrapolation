@@ -185,29 +185,36 @@ class Dataset():
     # Returns:
     #   transforms.Compose: Transformer pipeline for test images
     def get_transformer_test(self) -> transforms.Compose:
-        base_transforms = [transforms.ToTensor()]
+        resize_ops = self._build_resize_transforms()
+
+        base_transforms = resize_ops + [transforms.ToTensor()]
 
         if self.input_channels == 1:
-            base_transforms.insert(0, transforms.Grayscale(num_output_channels=1))
+            base_transforms.insert(len(resize_ops), transforms.Grayscale(num_output_channels=1))
             base_transforms.append(transforms.Normalize(mean=[0.5], std=[0.5]))
-
         elif self.input_channels == 3:
             base_transforms.append(transforms.Normalize(
                 mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225]
             ))
-
         else:
-            raise ValueError(f"Unsupported input_channels: {self.input_channels}. Use 1 (grayscale) or 3 (RGB).")
+            raise ValueError(f"Unsupported input_channels: {self.input_channels}.")
 
         return transforms.Compose(base_transforms)
 
     # Create a transformer for training WITH augmentations.
+    # The resize/crop step is configurable via settings:
+    #     img_resize_mode       : "none" | "stretch" | "resize_crop"
+    #     img_resize_crop_side  : "short" | "long"   (only for "resize_crop")
+    #     img_width / img_height: target dimensions
     # Returns:
-    #   transforms.Compose: Transformer pipeline for training images, or False if input_channels is invalid
+    #     transforms.Compose: Transformer pipeline for training images, or False if input_channels is invalid.
     def get_transformer_train(self):
+
+        resize_ops = self._build_resize_transforms()
+
         if self.input_channels == 1:
-            transformer = transforms.Compose([
+            transformer = transforms.Compose(resize_ops + [
                 transforms.Grayscale(num_output_channels=1),
 
                 # Spatial augmentations
@@ -258,7 +265,8 @@ class Dataset():
             return transformer
 
         elif self.input_channels == 3:
-            transformer = transforms.Compose([
+            transformer = transforms.Compose(resize_ops + [
+                # Spatial augmentations
                 transforms.RandomHorizontalFlip(p=self.hori_flip_prob),
                 transforms.RandomVerticalFlip(p=self.vert_flip_prob),
 
@@ -724,3 +732,38 @@ class Dataset():
             f"({', '.join(f'{k}={len(v)}' for k, v in info['val'].items())})")
         print(f"  test:  {info['counts']['test']} images "
             f"({', '.join(f'{k}={len(v)}' for k, v in info['test'].items())})")
+
+    # Build the resize/crop transform sequence based on settings.
+    # Returns a (possibly empty) list of transforms to insert at the
+    # beginning of every transformer pipeline. The returned transforms
+    # accept PIL images, so they must come BEFORE transforms.ToTensor().
+    def _build_resize_transforms(self) -> list:
+
+        mode = setting["img_resize_mode"].lower()
+        w = self.input_width
+        h = self.input_height
+
+        if mode == "none":
+            return []
+
+        if mode == "stretch":
+            return [transforms.Resize((h, w))]
+
+        if mode == "resize_crop":
+            side = setting["img_resize_crop_side"].lower()
+            if side == "short":
+                resize_size = min(h, w)
+            elif side == "long":
+                resize_size = max(h, w)
+            else:
+                raise ValueError(
+                    f"img_resize_crop_side must be 'short' or 'long', got {side!r}"
+                )
+            return [
+                transforms.Resize(resize_size),       # resize shorter/longer side
+                transforms.CenterCrop((h, w)),        # crop to exact target
+            ]
+
+        raise ValueError(
+            f"img_resize_mode must be 'none', 'stretch' or 'resize_crop', got {mode!r}"
+        )

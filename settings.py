@@ -20,7 +20,7 @@ setting = {
     # Number of epochs
     "train_num_epochs": 40, # 40
     # Batch size for training and validation datasets
-    "ds_batch_size": 50,
+    "ds_batch_size": 25,
     # Batch size for inference during test evaluation (cross-validation).
     # Distinct from ds_batch_size because training and inference have
     # different memory profiles and different throughput requirements.
@@ -84,7 +84,7 @@ setting = {
     #   output/train/<timestamp>/seed_<NN>/
     # Single-seed runs use the standard output folder:
     #   output/train/<timestamp>/
-    "ds_shuffle_seed": [42, 43, 44],    # [42, 43, 44]
+    "ds_shuffle_seed": 42,    # [42, 43, 44]
 
     # How many subprocesses are used to load data in parallel
     "ds_num_workers": 3,
@@ -125,8 +125,8 @@ setting = {
     # (Section 2.2 of the README) is the only pipeline that performs automatic
     # test evaluation as part of its own run.
     # ---------------------------------------------------------------------------
-    "ds_val_from_train_split": False,    # False
-    "ds_val_from_test_split": 1.0,    # 1.0/0.3
+    "ds_val_from_train_split": 0.25,    # False
+    "ds_val_from_test_split": False,    # 1.0/0.3
 
     ##########################
     # CLASSES AND CELL LINES #
@@ -135,12 +135,12 @@ setting = {
     ### PROJECT 1 (CLN7) ###
     # Define classes:
     # 2 classes (WT and KO):
-    "classes": ["KO", "WT"],
+    # "classes": ["KO", "WT"],
     # 9 classes (one for each cell line):
     # "classes": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075", "WT_1618-02", "WT_JG", "WT_JT", "WT_KM", "WT_MS"],
     # Define cell lines (for dataset generator)
-    "wt_lines": ["WT_1618-02", "WT_JG", "WT_JT", "WT_KM", "WT_MS"],
-    "ko_lines": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075"],
+    # "wt_lines": ["WT_1618-02", "WT_JG", "WT_JT", "WT_KM", "WT_MS"],
+    # "ko_lines": ["KO_1096-01", "KO_1618-01", "KO_BR2986", "KO_BR3075"],
 
     ### PROJECT 2 (MDD) ###
     # Define classes:
@@ -154,7 +154,115 @@ setting = {
     # Define cell lines (for dataset generator)
     # "wt_lines": ["WT_BJ", "WT_LF", "WT_MP", "WT_MW", "WT_NH"],
     # "ko_lines": ["MMD_155", "MMD_160", "MMD_169", "MMD_177"],
-    
+
+    ### TEST PROJECT (FLOWERS) ###
+    "classes": [
+    "pink_primrose",                  # label 1
+    "hard-leaved_pocket_orchid",      # label 2
+    "canterbury_bells",               # label 3
+    "sweet_pea",                      # label 4
+    "english_marigold",               # label 5
+    "tiger_lily",                     # label 6
+    "moon_orchid",                    # label 7
+    "bird_of_paradise",               # label 8
+    "monkshood",                      # label 9
+    "globe_thistle",                  # label 10
+    "snapdragon",                     # label 11
+    "colt's_foot",                    # label 12
+    "king_protea",                    # label 13
+    "spear_thistle",                  # label 14
+    "yellow_iris",                    # label 15
+    "globe-flower",                   # label 16
+    "purple_coneflower",              # label 17
+    "peruvian_lily",                  # label 18
+    "balloon_flower",                 # label 19
+    "giant_white_arum_lily",          # label 20
+    "fire_lily",                      # label 21
+    "pincushion_flower",              # label 22
+    "fritillary",                     # label 23
+    "red_ginger",                     # label 24
+    "grape_hyacinth",                 # label 25
+    "corn_poppy",                     # label 26
+    "prince_of_wales_feathers",       # label 27
+    "stemless_gentian",               # label 28
+    "artichoke",                      # label 29
+    "sweet_william",                  # label 30
+    "carnation",                      # label 31
+    "garden_phlox",                   # label 32
+    "love_in_the_mist",               # label 33
+    "mexican_aster",                  # label 34
+    "alpine_sea_holly",               # label 35
+    "ruby-lipped_cattleya",           # label 36
+    "cape_flower",                    # label 37
+    "great_masterwort",               # label 38
+    "siam_tulip",                     # label 39
+    "lenten_rose",                    # label 40
+    "barbeton_daisy",                 # label 41
+    "daffodil",                       # label 42
+    "sword_lily",                     # label 43
+    "poinsettia",                     # label 44
+    "bolero_deep_blue",               # label 45
+    "wallflower",                     # label 46
+    "marigold",                       # label 47
+    "buttercup",                      # label 48
+    "oxeye_daisy",                    # label 49
+    "common_dandelion",               # label 50
+    "petunia",                        # label 51
+    "wild_pansy",                     # label 52
+    "primula",                        # label 53
+    "sunflower",                      # label 54
+    "pelargonium",                    # label 55
+    "bishop_of_llandaff",             # label 56
+    "gaura",                          # label 57
+    "geranium",                       # label 58
+    "orange_dahlia",                  # label 59
+    "pink-yellow_dahlia",             # label 60
+    "cautleya_spicata",               # label 61
+    "japanese_anemone",               # label 62
+    "black-eyed_susan",               # label 63
+    "silverbush",                     # label 64
+    "californian_poppy",              # label 65
+    "osteospermum",                   # label 66
+    "spring_crocus",                  # label 67
+    "bearded_iris",                   # label 68
+    "windflower",                     # label 69
+    "tree_poppy",                     # label 70
+    "gazania",                        # label 71
+    "azalea",                         # label 72
+    "water_lily",                     # label 73
+    "rose",                           # label 74
+    "thorn_apple",                    # label 75
+    "morning_glory",                  # label 76
+    "passion_flower",                 # label 77
+    "lotus",                          # label 78
+    "toad_lily",                      # label 79
+    "anthurium",                      # label 80
+    "frangipani",                     # label 81
+    "clematis",                       # label 82
+    "hibiscus",                       # label 83
+    "columbine",                      # label 84
+    "desert-rose",                    # label 85
+    "tree_mallow",                    # label 86
+    "magnolia",                       # label 87
+    "cyclamen",                       # label 88
+    "watercress",                     # label 89
+    "canna_lily",                     # label 90
+    "hippeastrum",                    # label 91
+    "bee_balm",                       # label 92
+    "ball_moss",                      # label 93
+    "foxglove",                       # label 94
+    "bougainvillea",                  # label 95
+    "camellia",                       # label 96
+    "mallow",                         # label 97
+    "mexican_petunia",                # label 98
+    "bromelia",                       # label 99
+    "blanket_flower",                 # label 100
+    "trumpet_creeper",                # label 101
+    "blackberry_lily",                # label 102
+    ],
+    "wt_lines": [],
+    "ko_lines": [],
+   
     ###############
     # CHECKPOINTS #
     ###############
@@ -332,7 +440,21 @@ setting = {
     # Training image dimensions
     "img_width": 512,
     "img_height": 512,
-    "img_channels": 1,
+    "img_channels": 3,
+    # Resize strategy for all datasets (train, val, test, pred):
+    #   "none"        -> no resize; images keep their native size
+    #                    (only useful if all images already have identical size)
+    #   "stretch"     -> resize directly to (img_width, img_height)
+    #                    (distorts aspect ratio if images are not square)
+    #   "resize_crop" -> resize shorter side to the target, then center-crop
+    #                    (preserves aspect ratio, may crop image borders)
+    "img_resize_mode": "resize_crop",
+    # Only used when img_resize_mode == "resize_crop":
+    # Which side is resized to the target size first.
+    #   "short" -> shorter side becomes min(img_width, img_height)
+    #   "long"  -> longer side becomes max(img_width, img_height)
+    # "short" is the standard ImageNet-style behavior.
+    "img_resize_crop_side": "short",
 
     ################
     # CLASS SORTER #
