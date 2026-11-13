@@ -100,6 +100,10 @@ Throughout the pipeline, several utilities and scripts rely on **filename parsin
 
 Changing the naming convention at any stage will break downstream steps. If you adapt this code for your own data, either follow the conventions described in each chapter or update the regex patterns in the relevant utilities accordingly.
 
+### Image Size Handling
+
+The pipeline does **not** require images to have a fixed size at acquisition time. The resize behavior is controlled entirely by `img_resize_mode`, `img_resize_crop_side`, `img_width`, and `img_height` in `settings.py`. Images of different dimensions can be mixed freely in the same folder, as long as a resize mode other than `"none"` is configured. This makes it possible to combine images from different microscopes, magnifications, or acquisition settings into a single training run, at the cost of some geometric normalization.
+
 ### Scope and Limitations
 
 The scripts in this repository were developed iteratively over the course of a specific project. As the project progressed, the code became increasingly specialized — driven by the concrete requirements of the dataset, the disease model, and the imaging setup. This has consequences for reuse.
@@ -128,14 +132,31 @@ Several scripts were written with the specific network architecture, class struc
 
 The terms **`WT (wild-type)`** and **`KO (knockout)`** appear throughout the code — as folder names, as string constants in filtering logic, and as class labels in exported reports. Supporting an arbitrary number of classes (e.g., 3-way classification or multi-class disease subtypes) would require systematic changes across nearly every script.
 
-#### Fixed input dimensions
+#### Configurable input dimensions
 
-The pipeline is configured for:
+The image size and channel count are configured in `settings.py` under the `IMAGES` block:
 
-- **Grayscale images** (1 channel)
-- **512 × 512 pixels**
+- **`img_channels`** — 1 (grayscale) or 3 (RGB)
+- **`img_width` / `img_height`** — target dimensions after resize
+- **`img_resize_mode`** — how images are resized before entering the network
+- **`img_resize_crop_side`** — which side is resized first when `img_resize_mode = "resize_crop"`
 
-Other configurations may work in some scripts but will fail in others, particularly in the diffusion-based pipeline and the Class Sorter.
+Three resize strategies are supported:
+
+| `img_resize_mode` | Behavior | Use when |
+|-------------------|----------|----------|
+| `"none"` | No resize; images keep their native size | All images already have identical dimensions (e.g. CZI-exported 512×512 tiles) |
+| `"stretch"` | Resize directly to `(img_width, img_height)` | Images have mixed aspect ratios and minor distortion is acceptable |
+| `"resize_crop"` | Resize shorter (or longer) side to target, then center-crop | Images have mixed aspect ratios and distortion must be avoided (standard ImageNet-style preprocessing) |
+
+With `img_resize_mode = "resize_crop"`, `img_resize_crop_side` controls whether the **shorter** side (`"short"`, default) or the **longer** side (`"long"`) is resized to the target before cropping.
+
+**Important notes:**
+
+- `img_resize_mode = "none"` only works if **every image in the dataset has the same dimensions**. If images differ, the DataLoader will fail with `stack expects each tensor to be equal size` because `default_collate` cannot batch tensors of different shapes.
+- The resize/crop step is applied **before** all augmentations in the training transform, so random flips, rotations, and color jitter operate on uniformly sized images.
+- The custom CNN (`cnn_type = "custom"`) hard-codes the expected input size in its `forward()` asserts. With `img_resize_mode = "none"`, it will fail on any image that is not exactly `img_width × img_height`. With `"stretch"` or `"resize_crop"`, it works as before.
+- The diffusion-based pipeline and the Class Sorter have their own fixed assumptions and are not affected by these settings.
 
 #### No Defensive Error Handling
 
@@ -204,16 +225,27 @@ The module contains five sequential actions:
 
 **Description**: Initializes a new convolutional neural network based on the architecture defined in `settings.py`. Supports a wide range of torchvision architectures as well as a fully customizable CNN.
 
-#### Key Settings (from `settings.py`)
-
 | Setting | Type | Description | Example Value |
 |---------|------|-------------|---------------|
 | `cnn_type` | str | Architecture to load (see below) | `"densenet121"` |
 | `cnn_is_pretrained` | bool | Use ImageNet-pretrained weights | `True` |
 | `cnn_initialization` | str | Weight init method for non-pretrained models (`"kaiming"` / `"xavier"`) | `"kaiming"` |
 | `img_channels` | int | Input channels (1 = grayscale, 3 = RGB) | `1` |
-| `img_width` / `img_height` | int | Input dimensions | `512` |
+| `img_width` / `img_height` | int | Target dimensions after resize | `512` |
+| `img_resize_mode` | str | Resize strategy: `"none"`, `"stretch"`, or `"resize_crop"` | `"resize_crop"` |
+| `img_resize_crop_side` | str | Side resized first when `img_resize_mode = "resize_crop"`: `"short"` or `"long"` | `"short"` |
 | `classes` | list | Class names | `["KO", "WT"]` |
+
+**Resize modes at a glance:**
+
+| `img_resize_mode` | What happens to a 600×450 image with `img_width = img_height = 512` |
+|-------------------|----------------------------------------------------------------------|
+| `"none"` | Kept at 600×450 (would fail in a batch with differently sized images) |
+| `"stretch"` | Resized to 512×512 (aspect ratio distorted) |
+| `"resize_crop"` + `"short"` | Short side (450) → 512, giving 683×512, then center-cropped to 512×512 |
+| `"resize_crop"` + `"long"` | Long side (600) → 512, giving 512×384, then center-cropped/padded to 512×512 |
+
+The choice matters for classification quality. For microscopy images where cell shape is biologically relevant, `"resize_crop"` with `"short"` preserves aspect ratio at the cost of cropping the borders. `"stretch"` keeps the entire image but distorts geometry. `"none"` is only appropriate when all images already share the same dimensions.
 
 #### Supported Architectures
 
@@ -392,12 +424,13 @@ data/
     └── WT/
 ```
 
-The number of classes and their folder names must match the `classes` list in `settings.py`.
+The number of classes and their folder names must match the `classes` list in `settings.py`. Images within each class folder may have **any** dimensions; the resize step configured by `img_resize_mode` brings them to a uniform size before they reach the network. If `img_resize_mode = "none"`, all images must already share the same dimensions, otherwise the DataLoader will fail with a `stack expects each tensor to be equal size` error.
 
 #### Augmentation Pipeline (when enabled)
 
 | Transformation | Purpose | Parameters |
 |----------------|---------|------------|
+| **Resize / CenterCrop** (configurable) | Bring all images to uniform size before batching | `img_resize_mode`, `img_resize_crop_side`, `img_width`, `img_height` |
 | Horizontal / Vertical Flip | Simulate microscope orientation | p = 0.5 |
 | 90° Rotations | All four cardinal orientations | p = 0.5 |
 | Small-angle Rotation | Minor deviations | ±10°, fill = 100 |
@@ -406,6 +439,10 @@ The number of classes and their folder names must match the `classes` list in `s
 | Gaussian Blur | Simulate focus shifts | kernel = 5, σ ∈ [0.1, 0.5] |
 | Poisson Noise | Simulate low-light noise | scaling = 0.05, strength = 0.1 |
 | Normalization | Standardize pixel values | Mean = 0.5, Std = 0.5 (grayscale) |
+
+**Note on resize order:** The resize/crop step runs **before** all other augmentations, on the raw PIL image. This guarantees that every image entering the augmentation stack has the same dimensions, which is a prerequisite for `default_collate` to form a batch. Random flips, rotations, and color jitter then operate on uniformly sized images, so the augmentation behavior is consistent regardless of the original image size.
+
+If `img_resize_mode = "none"`, the resize row is skipped entirely, and the pipeline behaves exactly as in earlier versions of this code (no resize). This is only safe when all images already have identical dimensions.
 
 #### Example Workflow
 
